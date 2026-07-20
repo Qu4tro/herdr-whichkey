@@ -1,0 +1,50 @@
+# Built-in default menu for herdr-whichkey.
+#
+# Users never edit this file — their whichkey.toml overlays it: an entry with
+# the same path replaces the default, `= false` removes it. Items with
+# `requires = "<binary>"` auto-hide when the binary is missing; `action =`
+# items auto-hide when their plugin isn't installed.
+
+[menu]
+"a"   = { label = "agents" }
+"a c" = { label = "claude → split right", herdr = "agent start claude-{stamp} --tab {tab} --split right --cwd {cwd} -- claude", requires = "claude" }
+"a w" = { label = "claude → new workspace", herdr = "agent start claude-{stamp} --cwd {cwd} -- claude", requires = "claude" }
+"a x" = { label = "codex → split right", herdr = "agent start codex-{stamp} --tab {tab} --split right --cwd {cwd} -- codex", requires = "codex" }
+
+"p"   = { label = "panes" }
+"p v" = { label = "split right", herdr = "pane split {pane} --direction right" }
+"p s" = { label = "split down", herdr = "pane split {pane} --direction down" }
+"p z" = { label = "zoom", herdr = "pane zoom {pane} --toggle" }
+"p b" = { label = "break to tab", herdr = "pane move {pane} --new-tab" }
+"p x" = { label = "close", herdr = "pane close {pane}" }
+
+"r"   = { label = "resize" }
+"r h" = { label = "left", herdr = "pane resize --direction left --pane {pane}", stick = true }
+"r j" = { label = "down", herdr = "pane resize --direction down --pane {pane}", stick = true }
+"r k" = { label = "up", herdr = "pane resize --direction up --pane {pane}", stick = true }
+"r l" = { label = "right", herdr = "pane resize --direction right --pane {pane}", stick = true }
+
+"t"   = { label = "tabs" }
+"t n" = { label = "new tab", herdr = "tab create --workspace {workspace} --cwd {cwd}" }
+"t x" = { label = "close tab", herdr = "tab close {tab}" }
+
+"w"   = { label = "workspaces" }
+"w n" = { label = "new workspace", herdr = "workspace create --cwd {cwd}" }
+"w x" = { label = "close workspace", herdr = "workspace close {workspace}" }
+
+"g"   = { label = "git" }
+"g g" = { label = "lazygit", run = "lazygit", in = "tab", cwd = "{cwd}", requires = "lazygit" }
+"g w" = { label = "worktree: switch/create", action = "worktrunk.open" }
+"g c" = { label = "worktree from current", action = "worktrunk.open-current" }
+"g r" = { label = "worktree: remove", action = "worktrunk.remove" }
+
+"f"   = { label = "jump" }
+"f z" = { label = "zoxide", action = "herdr-zoxide.browse" }
+"f p" = { label = "command palette", action = "jt.command-palette.open" }
+"f n" = { label = "navigator", action = "herdr-navigator.open" }
+
+"s"   = { label = "shell & files" }
+"s f" = { label = "floax popup", action = "herdr-floax.toggle" }
+"s y" = { label = "yazi", run = "yazi", in = "pane", cwd = "{cwd}", requires = "yazi" }
+"s b" = { label = "file browser", action = "structupath.browser.browse" }
+"s p" = { label = "pluck token", action = "rmarganti.herdr-pluck.pluck" }

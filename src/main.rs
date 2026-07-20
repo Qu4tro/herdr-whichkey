@@ -1,50 +1,20 @@
-//! herdr-whichkey — blezz/which-key-style single-keystroke action menu for herdr.
-//!
-//! Runs inside a herdr plugin pane (bottom strip). Reads the menu tree from
-//! built-in defaults overlaid with the user's whichkey.toml, renders key hints
-//! in columns, dispatches on single keystrokes.
-//!
-//! Scaffold state: module layout and process lifecycle are real; menu content,
-//! config merge, dispatch, and theming are stubs filled in by later milestones.
+//! herdr-whichkey — blezz/which-key-style single-keystroke action menu
+//! for herdr. Runs inside a herdr popup pane (bottom strip): built-in
+//! defaults overlaid with the user's whichkey.toml, rendered as key hints
+//! in columns, dispatched on single keystrokes.
 
-use std::io::Write as _;
-use std::time::Duration;
+mod config;
+mod context;
+mod dispatch;
+mod keys;
+mod model;
+mod theme;
+mod ui;
 
-use anyhow::{Context as _, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::{cursor, execute, style, terminal};
-use serde::Deserialize;
+use anyhow::Result;
 
-/// Invocation context herdr injects into every plugin process.
-/// The only trustworthy source for "where was the user" — the plain
-/// HERDR_TAB_ID/HERDR_WORKSPACE_ID env vars can leak from the invoking
-/// CLI's own environment (see docs/spike-popup-panes.md).
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct HerdrContext {
-    workspace_id: String,
-    #[serde(default)]
-    workspace_label: String,
-    #[serde(default)]
-    workspace_cwd: String,
-    tab_id: String,
-    #[serde(default)]
-    tab_label: String,
-    #[serde(default)]
-    focused_pane_id: String,
-    #[serde(default)]
-    focused_pane_cwd: String,
-    #[serde(default)]
-    invocation_source: String,
-}
-
-impl HerdrContext {
-    fn from_env() -> Result<Self> {
-        let raw = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
-            .context("HERDR_PLUGIN_CONTEXT_JSON not set — run via the herdr plugin, not directly")?;
-        serde_json::from_str(&raw).context("could not parse HERDR_PLUGIN_CONTEXT_JSON")
-    }
-}
+use crate::context::HerdrContext;
+use crate::model::{Node, NodeKind};
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -59,71 +29,98 @@ fn main() -> Result<()> {
     }
 }
 
-/// Print the resolved menu tree (built-ins + user overlay) as TOML.
-/// Milestone: defaults + adaptive plugin detection.
-fn print_defaults() -> Result<()> {
-    println!("# herdr-whichkey resolved defaults (stub — populated in the defaults milestone)");
-    println!("[menu]");
-    Ok(())
-}
-
-/// The menu loop: raw mode, draw the strip, read single keystrokes, dispatch.
 fn run_menu() -> Result<()> {
-    let ctx = HerdrContext::from_env()?;
-
-    // Tell the launcher we're done on every exit path (incl. panics), so it
-    // can stop keeping the invoking action alive — required because herdr may
-    // tear popup views down when the invoking action exits (docs/spike-popup-panes.md).
+    // Tell the launcher we're done on every exit path, so it can stop
+    // keeping the invoking action alive — herdr may tear popup views down
+    // when the invoking action exits (docs/spike-popup-panes.md).
     let _done = DoneSignal::from_env();
 
-    terminal::enable_raw_mode()?;
-    let result = menu_loop(&ctx);
-    terminal::disable_raw_mode()?;
-    result
-}
+    // Resolve the palette before touching config errors: they render in
+    // the strip, themed (falling back to herdr's theme or ANSI).
+    let loaded = config::load(true);
+    let pal = match &loaded {
+        Ok(cfg) => theme::resolve(&cfg.theme),
+        Err(_) => theme::resolve(&Default::default()),
+    };
 
-fn menu_loop(ctx: &HerdrContext) -> Result<()> {
-    let mut out = std::io::stdout();
-    execute!(out, cursor::Hide)?;
+    let (tree, ctx) = match loaded.and_then(|cfg| load_tree(cfg)) {
+        Ok(v) => v,
+        Err(e) => return ui::show_error(&pal, &format!("{e:#}")),
+    };
+    if tree.is_empty() {
+        return ui::show_error(&pal, "menu is empty — every item was hidden or unavailable");
+    }
 
-    // Placeholder strip until the real tree/renderer lands (core milestone).
-    let (cols, _rows) = terminal::size().unwrap_or((80, 8));
-    execute!(
-        out,
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0),
-        style::Print(format!(
-            "whichkey scaffold — pane {} ws {} · press any key to echo, Esc/q to close",
-            ctx.focused_pane_id, ctx.workspace_id
-        )),
-        cursor::MoveTo(0, 1),
-        style::Print("─".repeat(cols as usize)),
-    )?;
-    out.flush()?;
-
-    loop {
-        if !event::poll(Duration::from_millis(500))? {
-            continue;
-        }
-        if let Event::Key(KeyEvent { code, modifiers, .. }) = event::read()? {
-            match code {
-                KeyCode::Esc | KeyCode::Char('q') => break,
-                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => break,
-                other => {
-                    execute!(
-                        out,
-                        cursor::MoveTo(0, 2),
-                        terminal::Clear(terminal::ClearType::CurrentLine),
-                        style::Print(format!("key: {other:?}")),
-                    )?;
-                    out.flush()?;
-                }
+    match ui::run(&tree, &pal, &ctx)? {
+        ui::Outcome::Closed => {}
+        // Deferred leaves run after the terminal is restored; the popup
+        // stays visible for the few ms this takes, which beats dispatching
+        // from inside raw mode and racing our own teardown.
+        ui::Outcome::Deferred(leaf, label) => {
+            if let Err(e) = dispatch::execute(&leaf, &ctx) {
+                dispatch::notify_failure(&label, &e);
             }
         }
     }
-
-    execute!(out, cursor::Show)?;
     Ok(())
+}
+
+fn load_tree(cfg: config::Config) -> Result<(Vec<Node>, HerdrContext)> {
+    let ctx = HerdrContext::from_env()?;
+    let tree = config::build_tree(&cfg.entries)?;
+
+    let plugins = dispatch::installed_plugins();
+    let have_bin = |b: &str| dispatch::binary_on_path(b);
+    // Probe failure (no server?) keeps action items visible — hiding the
+    // whole menu because one probe failed would be the surprising choice.
+    let have_plugin = |p: &str| plugins.as_ref().map(|set| set.contains(p)).unwrap_or(true);
+    Ok((model::prune_unavailable(tree, &have_bin, &have_plugin), ctx))
+}
+
+/// `herdr-whichkey defaults` — the live resolved tree (defaults + user
+/// overlay), annotated with what adaptive detection would hide right now.
+fn print_defaults() -> Result<()> {
+    let cfg = config::load(false)?;
+    let tree = config::build_tree(&cfg.entries)?;
+
+    let plugins = dispatch::installed_plugins();
+    let have_bin = |b: &str| dispatch::binary_on_path(b);
+    let have_plugin = |p: &str| plugins.as_ref().map(|set| set.contains(p)).unwrap_or(true);
+
+    let mut out = format!(
+        "# resolved menu (defaults + {})\n",
+        config::user_config_path().display()
+    );
+    print_nodes(&mut out, &tree, "", &have_bin, &have_plugin);
+    // One buffered write, EPIPE ignored — `defaults | head` must not panic.
+    use std::io::Write as _;
+    let _ = std::io::stdout().write_all(out.as_bytes());
+    Ok(())
+}
+
+fn print_nodes(
+    out: &mut String,
+    nodes: &[Node],
+    indent: &str,
+    have_bin: &dyn Fn(&str) -> bool,
+    have_plugin: &dyn Fn(&str) -> bool,
+) {
+    use std::fmt::Write as _;
+    for n in nodes {
+        let hidden = model::unavailable_reason(n, have_bin, have_plugin)
+            .map(|r| format!("   (hidden: {r})"))
+            .unwrap_or_default();
+        let stick = if n.stick { "   (stick)" } else { "" };
+        match &n.kind {
+            NodeKind::Group(children) => {
+                let _ = writeln!(out, "{indent}{}  {} ›{hidden}", keys::display_key(n.key), n.label);
+                print_nodes(out, children, &format!("{indent}  "), have_bin, have_plugin);
+            }
+            NodeKind::Leaf(_) => {
+                let _ = writeln!(out, "{indent}{}  {}{stick}{hidden}", keys::display_key(n.key), n.label);
+            }
+        }
+    }
 }
 
 /// Writes to the launcher's done-fifo on drop, unblocking the action script.
