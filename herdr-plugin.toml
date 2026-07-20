@@ -4,7 +4,7 @@
 # strip in a popup plugin pane. The keybinding invokes the `open` action; its
 # launcher script opens the popup and stays alive until the menu closes,
 # because herdr can tear transient popup views down when the invoking action
-# exits (see SPIKE.md).
+# exits (see docs/spike-popup-panes.md).
 
 id = "herdr-whichkey"
 name = "herdr-whichkey"

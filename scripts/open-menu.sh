@@ -3,7 +3,7 @@
 #
 # Opens the plugin pane and then blocks until the menu binary signals it is
 # done. Staying alive matters: herdr may tear popup views down the moment the
-# invoking action exits (observed on 0.7.1, unconfirmed on 0.7.4 — SPIKE.md),
+# invoking action exits (observed on 0.7.1, unconfirmed on 0.7.4 — docs/spike-popup-panes.md),
 # so the safe lifecycle under both semantics is action-lives-as-long-as-menu.
 set -euo pipefail
 

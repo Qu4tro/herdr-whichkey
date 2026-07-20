@@ -18,7 +18,7 @@ use serde::Deserialize;
 /// Invocation context herdr injects into every plugin process.
 /// The only trustworthy source for "where was the user" — the plain
 /// HERDR_TAB_ID/HERDR_WORKSPACE_ID env vars can leak from the invoking
-/// CLI's own environment (see SPIKE.md).
+/// CLI's own environment (see docs/spike-popup-panes.md).
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct HerdrContext {
@@ -73,7 +73,7 @@ fn run_menu() -> Result<()> {
 
     // Tell the launcher we're done on every exit path (incl. panics), so it
     // can stop keeping the invoking action alive — required because herdr may
-    // tear popup views down when the invoking action exits (SPIKE.md).
+    // tear popup views down when the invoking action exits (docs/spike-popup-panes.md).
     let _done = DoneSignal::from_env();
 
     terminal::enable_raw_mode()?;
