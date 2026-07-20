@@ -15,10 +15,10 @@ DEST_DIR="target/release"
 # the source build takes over.
 sha_for() {
   case "$1" in
-    x86_64-unknown-linux-gnu)  echo "" ;;
-    aarch64-unknown-linux-gnu) echo "" ;;
-    aarch64-apple-darwin)      echo "" ;;
-    x86_64-apple-darwin)       echo "" ;;
+    x86_64-unknown-linux-gnu)  echo "9fd121c58d2a4960f6ec86a01c34a6feaf40705f4bd569660945691872956882" ;;
+    aarch64-unknown-linux-gnu) echo "945cd426f8f240785f3aea9cdfcc096b722e6a9de03480ec87cba22e1cfe0ba0" ;;
+    aarch64-apple-darwin)      echo "f173f74c69dff86d3f942ce9d4506af04962f01d0472c6917534ef194f87c214" ;;
+    x86_64-apple-darwin)       echo "6921150583bdf4e98c72e14efa9202e963d5f18e0a18a892377a8496daf7aba1" ;;
     *)                         echo "" ;;
   esac
 }
