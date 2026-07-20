@@ -1,0 +1,33 @@
+# herdr-plugin.toml — manifest for herdr-whichkey.
+#
+# A blezz/which-key-style single-keystroke action menu, rendered as a bottom
+# strip in a popup plugin pane. The keybinding invokes the `open` action; its
+# launcher script opens the popup and stays alive until the menu closes,
+# because herdr can tear transient popup views down when the invoking action
+# exits (see SPIKE.md).
+
+id = "herdr-whichkey"
+name = "herdr-whichkey"
+version = "0.1.0"
+description = "blezz/which-key-style single-keystroke action menu: one trigger key, then a hint strip and one keystroke per action."
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+# Fetch a prebuilt release binary for this host, or fall back to cargo.
+[[build]]
+command = ["bash", "scripts/build.sh"]
+
+# The menu strip. Opened by the launcher with --placement popup
+# --width 100% --height 8 (geometry validated in the live-UX milestone).
+[[panes]]
+id = "menu"
+title = "whichkey"
+placement = "popup"
+command = ["./target/release/herdr-whichkey", "menu"]
+
+# The action a [[keys.command]] binding references as `herdr-whichkey.open`.
+[[actions]]
+id = "open"
+title = "Open the whichkey menu"
+description = "Show the single-keystroke action strip for the focused workspace."
+command = ["bash", "scripts/open-menu.sh"]

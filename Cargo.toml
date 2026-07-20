@@ -1,0 +1,18 @@
+[package]
+name = "herdr-whichkey"
+version = "0.1.0"
+edition = "2021"
+description = "blezz/which-key-style single-keystroke action menu for herdr"
+license = "MIT"
+repository = "https://github.com/Qu4tro/herdr-whichkey"
+
+[dependencies]
+anyhow = "1"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[profile.release]
+strip = true
+lto = true
