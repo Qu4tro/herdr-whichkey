@@ -5,8 +5,7 @@ key, then a bottom hint strip and **one keystroke per action** — no typing, no
 Enter. Nested groups, sticky (hydra-style) repeat for resize, and defaults that
 adapt to the herdr plugins and tools you actually have installed.
 
-> **Status: pre-release.** Feature-complete, pending live UX validation. Not
-> yet on the marketplace.
+> **Status: pre-release.** Live-validated; not yet on the marketplace.
 
 ## Install
 
@@ -33,8 +32,10 @@ herdr server reload-config
 ```
 
 `prefix` (Ctrl+B by default), then `space`, then single keys walk the menu.
-Esc closes, Backspace goes up one level, unknown keys just hint — nothing
-flashes or steals your layout.
+The strip docks as an 8-row split under the pane you're in and puts the
+layout back when it closes. Esc goes back up a level (and closes from the
+root), Backspace also goes back, Ctrl+C always closes — and pressing the
+trigger again closes the menu. Unknown keys just hint; nothing flashes.
 
 ## Defaults
 

@@ -1,7 +1,7 @@
 //! herdr-whichkey — blezz/which-key-style single-keystroke action menu
-//! for herdr. Runs inside a herdr popup pane (bottom strip): built-in
-//! defaults overlaid with the user's whichkey.toml, rendered as key hints
-//! in columns, dispatched on single keystrokes.
+//! for herdr. Runs inside a herdr plugin pane docked as a bottom split:
+//! built-in defaults overlaid with the user's whichkey.toml, rendered as
+//! key hints in columns, dispatched on single keystrokes.
 
 mod config;
 mod context;
@@ -51,6 +51,13 @@ fn run_menu() -> Result<()> {
             std::process::exit(130);
         }
     });
+
+    // Split placement opens at ratio 0.5 and can't be sized at open time
+    // — shrink to strip height before the first frame paints (the
+    // launcher tags the surface; popups size themselves at open).
+    if std::env::var_os("WHICHKEY_SURFACE").is_some_and(|v| v == "split") {
+        dispatch::fit_split_height(8);
+    }
 
     // Resolve the palette before touching config errors: they render in
     // the strip, themed (falling back to herdr's theme or ANSI).

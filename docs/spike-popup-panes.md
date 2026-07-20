@@ -52,14 +52,43 @@ observation below is valid** — display-level questions move to live validation
   (a reader-less fifo would otherwise block our own exit forever).
   Verified: SIGTERM → launcher unblocks immediately.
 
-## Open — needs a live attached client (task: live UX validation)
+## Resolved by live validation (2026-07-20, herdr 0.7.4)
 
-1. Does a popup opened by a **keybinding-invoked** action render, and does it
-   survive the action exiting? (Launcher-stays-alive makes the answer
-   non-blocking either way.)
-2. Geometry of `--width 100% --height 8`: bottom-docked strip or centered
-   float? If centered-only → decide: accept centered strip vs `split
-   --direction down` fallback (which reflows the focused pane briefly).
-3. Does `--focus` route keyboard input to the popup process, and does focus
-   return to the previous pane when the popup closes?
-4. Theme match and flicker under the real client.
+The four open questions, answered with the user at a real client:
+
+1. Keybinding-invoked popups **render** and input routes to them. ✓
+2. Geometry: `--width 100% --height 8` floats **centered** — popups cannot
+   dock. `overlay` placement is full-screen (rejects width/height) but
+   returns a **real pane_id** (addressable, closable — unlike popups).
+   **Decision: ship `split --direction down` as the surface**, self-fit to
+   8 rows (below).
+3. `--focus` routes input; focus returns to the previous pane on close —
+   for splits it falls to the split sibling, which is the same pane. ✓
+4. Theme matched (gruvbox) with no flashes or flicker. ✓
+
+Split-surface findings that shaped the implementation:
+
+- `plugin pane open --placement split` always opens at **ratio 0.5** and
+  takes no ratio flag; `layout.set_split_ratio` exists in the API but has
+  no CLI. The binary therefore resizes itself before its first frame.
+- `pane resize --amount` is an **exact ratio delta** on the split that
+  contains the pane in that direction. Magnitude is capped per call
+  (~0.5), ratios clamp to [0.1, 0.9] (so on very tall tabs the strip
+  bottoms out at 10% instead of 8 rows), negative amounts do not reverse
+  direction, and resizing a bottom-most pane "down" is a no-op — shrink
+  the bottom pane by growing the sibling above it downward.
+- Rows are laid out as `round(height × ratio)`: compute deltas from the
+  **stored split ratio** (`pane layout` → `splits[].ratio`), not from row
+  counts, or the result is off by one.
+- Split plugin panes are **not singletons** — a second open stacks a
+  second pane. The launcher holds a lock directory with the open pane id;
+  a second press sends `ctrl+c` to that pane (split panes are
+  addressable; `pane send-keys` accepts herdr key-string names), turning
+  re-invocation into a toggle.
+- Split pane processes get their **own** id in `HERDR_PANE_ID`
+  (server-injected, verified against a cross-session caller) and the
+  original pane's id as `focused_pane_id` in `HERDR_PLUGIN_CONTEXT_JSON`
+  — everything the self-fit resize needs.
+- The pane closes when its process exits, same as popups; the launcher's
+  fifo/lock cleanup was verified through invoke → toggle → state dir
+  empty.

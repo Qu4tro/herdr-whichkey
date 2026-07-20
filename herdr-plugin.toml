@@ -1,9 +1,9 @@
 # herdr-plugin.toml — manifest for herdr-whichkey.
 #
 # A blezz/which-key-style single-keystroke action menu, rendered as a bottom
-# strip in a popup plugin pane. The keybinding invokes the `open` action; its
-# launcher script opens the popup and stays alive until the menu closes,
-# because herdr can tear transient popup views down when the invoking action
+# strip in a split plugin pane. The keybinding invokes the `open` action; its
+# launcher script opens the pane and stays alive until the menu closes,
+# because herdr can tear transient plugin views down when the invoking action
 # exits (see docs/spike-popup-panes.md).
 
 id = "herdr-whichkey"
@@ -17,12 +17,13 @@ platforms = ["linux", "macos"]
 [[build]]
 command = ["bash", "scripts/build.sh"]
 
-# The menu strip. Opened by the launcher with --placement popup
-# --width 100% --height 8 (geometry validated in the live-UX milestone).
+# The menu strip. Opened by the launcher with --placement split
+# --direction down; the binary then shrinks itself to strip height
+# (popups can only float centered on 0.7.4 — live-UX finding).
 [[panes]]
 id = "menu"
 title = "whichkey"
-placement = "popup"
+placement = "split"
 command = ["./target/release/herdr-whichkey", "menu"]
 
 # The action a [[keys.command]] binding references as `herdr-whichkey.open`.

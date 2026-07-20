@@ -194,6 +194,100 @@ fn pane_in_tab(v: &serde_json::Value, tab: &str) -> Option<String> {
     walk(v, tab)
 }
 
+// ── split-surface sizing ────────────────────────────────────────────────
+
+/// Shrink our bottom-split pane to `target` rows before the first frame.
+/// Plugin splits always open at ratio 0.5 and take no ratio flag, and
+/// `pane resize` on a bottom-most pane can only grow it — so the shrink
+/// is a grow of the original pane (our split sibling) downward, by an
+/// exact ratio delta. Best-effort: on any failure the menu just stays at
+/// the 50% herdr gave it.
+pub fn fit_split_height(target: u16) {
+    let Some(own) = std::env::var("HERDR_PANE_ID").ok().filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let Ok(layout) = check(
+        Command::new(herdr_bin()).args(["pane", "layout", "--pane", &own]),
+        "pane layout",
+    ) else {
+        return;
+    };
+    let layout = &layout["result"]["layout"];
+    let Some(own_rect) = layout["panes"].as_array().and_then(|ps| {
+        ps.iter()
+            .find(|p| p["pane_id"].as_str() == Some(own.as_str()))
+            .map(|p| p["rect"].clone())
+    }) else {
+        return;
+    };
+    // The innermost down-split holding our pane. Its stored ratio is the
+    // exact value resize amounts add to — deriving it from row counts is
+    // off by the rounding herdr applied when it laid the rows out.
+    let Some((ratio_now, split_h)) = layout["splits"].as_array().and_then(|ss| {
+        ss.iter()
+            .filter(|s| s["direction"].as_str() == Some("down"))
+            .filter(|s| rect_contains(&s["rect"], &own_rect))
+            .min_by_key(|s| s["rect"]["height"].as_u64().unwrap_or(u64::MAX))
+            .and_then(|s| Some((s["ratio"].as_f64()?, s["rect"]["height"].as_u64()?)))
+    }) else {
+        return;
+    };
+    let Some(amount) = fit_amount(ratio_now, split_h, u64::from(target)) else { return };
+    // The sibling is whoever was focused when the launcher split it off.
+    // If the ids match, the env is not ours to trust (see the context-leak
+    // trap in docs/spike-popup-panes.md) — don't resize anything.
+    let Some(orig) = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
+        .ok()
+        .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+        .and_then(|v| v["focused_pane_id"].as_str().map(String::from))
+    else {
+        return;
+    };
+    if orig == own {
+        return;
+    }
+    let _ = check(
+        Command::new(herdr_bin()).args([
+            "pane",
+            "resize",
+            "--pane",
+            &orig,
+            "--direction",
+            "down",
+            "--amount",
+            &format!("{amount:.4}"),
+        ]),
+        "pane resize",
+    );
+}
+
+/// Ratio delta taking the split from `ratio_now` to the ratio that lays
+/// our (second) pane out at `target` rows; None when there is nothing
+/// (safe) to do. Single-call amounts cap out around 0.5, which a
+/// 0.5-ratio split never needs; the server also clamps ratios to 0.9, so
+/// on very tall tabs the strip bottoms out at 10% instead of 8 rows.
+fn fit_amount(ratio_now: f64, split_h: u64, target: u64) -> Option<f64> {
+    if split_h <= target {
+        return None;
+    }
+    let delta = (split_h - target) as f64 / split_h as f64 - ratio_now;
+    (delta > 0.0).then_some(delta)
+}
+
+/// Both rects are `{x, y, width, height}`; true when `inner` fits inside.
+fn rect_contains(outer: &serde_json::Value, inner: &serde_json::Value) -> bool {
+    let f = |v: &serde_json::Value, k: &str| v[k].as_i64();
+    match (
+        (f(outer, "x"), f(outer, "y"), f(outer, "width"), f(outer, "height")),
+        (f(inner, "x"), f(inner, "y"), f(inner, "width"), f(inner, "height")),
+    ) {
+        ((Some(ox), Some(oy), Some(ow), Some(oh)), (Some(ix), Some(iy), Some(iw), Some(ih))) => {
+            ix >= ox && iy >= oy && ix + iw <= ox + ow && iy + ih <= oy + oh
+        }
+        _ => false,
+    }
+}
+
 // ── availability probes (adaptive auto-hide) ────────────────────────────
 
 /// Installed plugin ids via `herdr plugin action list`. `None` when the
@@ -268,6 +362,26 @@ mod tests {
         assert_eq!(find_str_key(&v, "pane_id").unwrap(), "w1:p9");
         assert_eq!(pane_in_tab(&v, "w1:t2").unwrap(), "w1:p9");
         assert!(pane_in_tab(&v, "w1:t3").is_none());
+    }
+
+    #[test]
+    fn fit_amount_targets_exact_rows() {
+        // 23-row split at ratio 0.5, want 8 menu rows: top must reach
+        // 15/23, so grow it by the difference.
+        assert!((fit_amount(0.5, 23, 8).unwrap() - (15.0 / 23.0 - 0.5)).abs() < 1e-9);
+        // Already at/above the needed ratio, or a split too small: no-op.
+        assert_eq!(fit_amount(0.9, 23, 8), None);
+        assert_eq!(fit_amount(0.5, 8, 8), None);
+        assert_eq!(fit_amount(0.5, 6, 8), None);
+    }
+
+    #[test]
+    fn rect_containment() {
+        let r = |x, y, w, h| serde_json::json!({"x": x, "y": y, "width": w, "height": h});
+        assert!(rect_contains(&r(0, 0, 80, 23), &r(0, 15, 80, 8)));
+        assert!(rect_contains(&r(0, 0, 80, 23), &r(0, 0, 80, 23)));
+        assert!(!rect_contains(&r(0, 0, 40, 23), &r(30, 0, 40, 8)));
+        assert!(!rect_contains(&serde_json::json!({}), &r(0, 0, 1, 1)));
     }
 
     #[test]

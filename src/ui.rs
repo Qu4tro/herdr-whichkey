@@ -1,6 +1,6 @@
 //! The bottom-strip menu: flicker-free rendering (one synchronized frame
 //! per keystroke, no full-screen clears between frames) and the
-//! single-keystroke loop. We own the whole popup pane surface.
+//! single-keystroke loop. We own the whole plugin pane surface.
 
 use std::io::Write as _;
 
@@ -69,7 +69,16 @@ pub fn run(tree: &[Node], pal: &Palette, ctx: &HerdrContext) -> Result<Outcome> 
                 if kind == KeyEventKind::Press || kind == KeyEventKind::Repeat =>
             {
                 match code {
-                    KeyCode::Esc => return Ok(Outcome::Closed),
+                    // Esc walks back up and only closes from the root —
+                    // ctrl+c (and the launcher's toggle) always closes.
+                    KeyCode::Esc => {
+                        if stack.len() > 1 {
+                            stack.pop();
+                            notice = Notice::None;
+                        } else {
+                            return Ok(Outcome::Closed);
+                        }
+                    }
                     KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(Outcome::Closed)
                     }
@@ -210,12 +219,13 @@ fn render(pal: &Palette, stack: &[(&[Node], String)], level: &[Node], notice: &N
         }
     }
 
-    // Footer: static hints left, transient notice after.
+    // Footer: hints for where we are, transient notice after.
+    let hints = if stack.len() > 1 { " esc back · ctrl+c close" } else { " esc close" };
     queue!(
         out,
         cursor::MoveTo(0, rows.saturating_sub(1)),
         SetForegroundColor(pal.dim),
-        style::Print(" esc close · bksp back")
+        style::Print(hints)
     )?;
     let (text, color) = match notice {
         Notice::None => (String::new(), pal.dim),
@@ -228,7 +238,7 @@ fn render(pal: &Palette, stack: &[(&[Node], String)], level: &[Node], notice: &N
             SetForegroundColor(pal.dim),
             style::Print(" · "),
             SetForegroundColor(color),
-            style::Print(clip(&text, cols_u.saturating_sub(26)))
+            style::Print(clip(&text, cols_u.saturating_sub(hints.chars().count() + 3)))
         )?;
     }
 
