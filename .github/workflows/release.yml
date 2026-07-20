@@ -1,0 +1,66 @@
+# Tag v* → build the four supported triples on native runners, publish a
+# GitHub release with tarballs + SHA256SUMS. After a release, copy the
+# sums into scripts/build.sh (sha_for) and bump its VERSION so installs
+# pick up the prebuilts.
+#
+# ubuntu-24.04-arm is free for public repos only — tag releases after the
+# repo is public, or that job won't schedule.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: rustup update --no-self-update stable && rustup default stable
+      - name: test
+        run: cargo test --release
+      - name: build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: package
+        run: >
+          tar -C target/${{ matrix.target }}/release -czf
+          herdr-whichkey-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          herdr-whichkey
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: "*.tar.gz"
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: checksums
+        run: sha256sum ./*.tar.gz > SHA256SUMS
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" ./*.tar.gz SHA256SUMS
+          --repo "$GITHUB_REPOSITORY"
+          --title "herdr-whichkey $GITHUB_REF_NAME"
+          --generate-notes
