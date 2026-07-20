@@ -35,6 +35,23 @@ fn run_menu() -> Result<()> {
     // when the invoking action exits (docs/spike-popup-panes.md).
     let _done = DoneSignal::from_env();
 
+    // Drop doesn't run when we die by signal (e.g. herdr tearing the popup
+    // down), which would leave the launcher blocked on the fifo until its
+    // timeout — signal the fifo from a handler thread instead.
+    std::thread::spawn(|| {
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+        let mut signals = match signal_hook::iterator::Signals::new([SIGTERM, SIGHUP, SIGINT]) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        if signals.forever().next().is_some() {
+            if let Some(path) = std::env::var_os("WHICHKEY_DONE_FIFO") {
+                write_done_fifo(std::path::Path::new(&path));
+            }
+            std::process::exit(130);
+        }
+    });
+
     // Resolve the palette before touching config errors: they render in
     // the strip, themed (falling back to herdr's theme or ANSI).
     let loaded = config::load(true);
@@ -139,7 +156,22 @@ impl DoneSignal {
 impl Drop for DoneSignal {
     fn drop(&mut self) {
         if let Some(path) = self.fifo.take() {
-            let _ = std::fs::write(path, b"done\n");
+            write_done_fifo(&path);
         }
+    }
+}
+
+/// Non-blocking fifo write: a plain `fs::write` would block forever when
+/// the launcher is already gone (reader-less fifo), hanging our own exit.
+/// O_NONBLOCK without O_CREAT fails fast in every launcher-gone case.
+fn write_done_fifo(path: &std::path::Path) {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+    {
+        let _ = f.write_all(b"done\n");
     }
 }
