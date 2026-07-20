@@ -5,7 +5,7 @@ key, then a bottom hint strip and **one keystroke per action** — no typing, no
 Enter. Nested groups, sticky (hydra-style) repeat for resize, and defaults that
 adapt to the herdr plugins and tools you actually have installed.
 
-> **Status: pre-release.** Live-validated; not yet on the marketplace.
+> **Status: v0.1.0 released.**
 
 ## Install
 
