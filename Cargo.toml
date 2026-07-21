@@ -2,6 +2,10 @@
 name = "herdr-whichkey"
 version = "0.2.2"
 edition = "2021"
+# A snapshot of what the current lock needs, not a promise: indexmap/hashbrown
+# (via toml's preserve_order) are the floor at 1.85; nothing else needs past
+# 1.71. Bump this freely when a dep upgrade raises it.
+rust-version = "1.85"
 description = "blezz/which-key-style single-keystroke action menu for herdr"
 license = "MIT"
 repository = "https://github.com/Qu4tro/herdr-whichkey"
