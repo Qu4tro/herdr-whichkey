@@ -7,6 +7,7 @@ use anyhow::{bail, Context as _, Result};
 use serde::Deserialize;
 
 use crate::keys;
+use crate::layout::LayoutConfig;
 use crate::model::{fallback_label, leaf_from_spec, Entry, ItemSpec, Node, NodeKind};
 use crate::theme::ThemeOverrides;
 
@@ -19,12 +20,15 @@ struct FileConfig {
     menu: toml::map::Map<String, toml::Value>,
     #[serde(default)]
     theme: ThemeOverrides,
+    #[serde(default)]
+    layout: LayoutConfig,
 }
 
 pub struct Config {
     /// Merged flat entries in menu order (defaults first, user additions after).
     pub entries: Vec<(String, ItemSpec)>,
     pub theme: ThemeOverrides,
+    pub layout: LayoutConfig,
 }
 
 /// The user's config file path: plugin config dir when running under herdr,
@@ -82,7 +86,7 @@ pub fn load(seed_if_missing: bool) -> Result<Config> {
         }
     }
 
-    Ok(Config { entries, theme: user.theme })
+    Ok(Config { entries, theme: user.theme, layout: user.layout })
 }
 
 fn normalize_path(path: &str) -> String {
@@ -218,6 +222,13 @@ fn seed(path: &std::path::Path) -> Result<()> {
          # `\"g g\" = false` hides, new paths add. Keys use herdr's format\n\
          # (\"g s\" = press g then s). Run `herdr-whichkey defaults` for the\n\
          # live resolved tree. Placeholders: {pane} {tab} {workspace} {cwd} {stamp}.\n\
+         \n\
+         # [layout]                    # how items spread across the strip\n\
+         # justify = \"space-evenly\"    #   columns: start | center | end | space-between | space-around | space-evenly\n\
+         # align   = \"space-around\"    #   rows: same keywords\n\
+         # height  = 7                 #   strip height in split rows (~2 are pane chrome)\n\
+         # columns = 4                 #   pin the column count (default: fit the width)\n\
+         # gutter  = 9                 #   cells between columns (default: half an item)\n\
          \n\
          [menu]\n\
          # \"d\"   = { label = \"dotfiles\", run = \"chezmoi edit\", in = \"pane\" }\n\

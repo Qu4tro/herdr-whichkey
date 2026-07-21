@@ -32,7 +32,7 @@ herdr server reload-config
 ```
 
 `prefix` (Ctrl+B by default), then `space`, then single keys walk the menu.
-The strip docks as an 8-row split under the pane you're in and puts the
+The strip docks as a 7-row split under the pane you're in and puts the
 layout back when it closes. Esc goes back up a level (and closes from the
 root), Backspace also goes back, Ctrl+C always closes — and pressing the
 trigger again closes the menu. Unknown keys just hint; nothing flashes.
@@ -79,6 +79,28 @@ change.
   would expand them.
 - `stick = true` keeps the menu open for repeatable actions (resize).
 - `requires = "binary"` hides the item unless the binary is on PATH.
+
+## Layout
+
+Items flow into a footer-style grid: the strip width decides the column
+count, and CSS content-distribution keywords (computed by [taffy], the
+CSS grid engine) decide the spacing. Tune it in whichkey.toml:
+
+```toml
+[layout]
+justify = "space-evenly"  # columns: start | center | end |
+align   = "space-around"  # rows:      space-between | space-around | space-evenly
+height  = 7               # strip height in split rows (~2 are pane chrome)
+columns = 4               # pin the column count (default: fit the width)
+gutter  = 9               # cells between columns (default: half an item)
+```
+
+`justify` spreads the columns across the strip, `align` spreads the rows
+down it. `gutter` sets the spacing floor when fitting columns and the
+actual gap under `start`/`center`/`end` (the `space-*` modes make their
+own gaps).
+
+[taffy]: https://github.com/DioxusLabs/taffy
 
 ## Theming
 

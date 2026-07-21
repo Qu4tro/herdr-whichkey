@@ -7,6 +7,7 @@ mod config;
 mod context;
 mod dispatch;
 mod keys;
+mod layout;
 mod model;
 mod theme;
 mod ui;
@@ -52,22 +53,26 @@ fn run_menu() -> Result<()> {
         }
     });
 
+    // Config first: the split fit below wants `[layout] height`, and
+    // loading a local TOML is nothing next to the herdr calls that follow.
+    let loaded = config::load(true);
+
     // Split placement opens at ratio 0.5 and can't be sized at open time
     // — shrink to strip height before the first frame paints (the
     // launcher tags the surface; popups size themselves at open).
     if std::env::var_os("WHICHKEY_SURFACE").is_some_and(|v| v == "split") {
-        dispatch::fit_split_height(8);
+        let h = loaded.as_ref().ok().and_then(|c| c.layout.height).unwrap_or(7);
+        dispatch::fit_split_height(h.max(3));
     }
 
     // Resolve the palette before touching config errors: they render in
     // the strip, themed (falling back to herdr's theme or ANSI).
-    let loaded = config::load(true);
     let pal = match &loaded {
         Ok(cfg) => theme::resolve(&cfg.theme),
         Err(_) => theme::resolve(&Default::default()),
     };
 
-    let (tree, ctx) = match loaded.and_then(|cfg| load_tree(cfg)) {
+    let (tree, ctx, lay) = match loaded.and_then(|cfg| load_tree(cfg)) {
         Ok(v) => v,
         Err(e) => return ui::show_error(&pal, &format!("{e:#}")),
     };
@@ -75,7 +80,7 @@ fn run_menu() -> Result<()> {
         return ui::show_error(&pal, "menu is empty — every item was hidden or unavailable");
     }
 
-    match ui::run(&tree, &pal, &ctx)? {
+    match ui::run(&tree, &pal, &lay, &ctx)? {
         ui::Outcome::Closed => {}
         // Deferred leaves run after the terminal is restored; the popup
         // stays visible for the few ms this takes, which beats dispatching
@@ -89,7 +94,7 @@ fn run_menu() -> Result<()> {
     Ok(())
 }
 
-fn load_tree(cfg: config::Config) -> Result<(Vec<Node>, HerdrContext)> {
+fn load_tree(cfg: config::Config) -> Result<(Vec<Node>, HerdrContext, layout::LayoutConfig)> {
     let ctx = HerdrContext::from_env()?;
     let tree = config::build_tree(&cfg.entries)?;
 
@@ -98,7 +103,7 @@ fn load_tree(cfg: config::Config) -> Result<(Vec<Node>, HerdrContext)> {
     // Probe failure (no server?) keeps action items visible — hiding the
     // whole menu because one probe failed would be the surprising choice.
     let have_plugin = |p: &str| plugins.as_ref().map(|set| set.contains(p)).unwrap_or(true);
-    Ok((model::prune_unavailable(tree, &have_bin, &have_plugin), ctx))
+    Ok((model::prune_unavailable(tree, &have_bin, &have_plugin), ctx, cfg.layout))
 }
 
 /// `herdr-whichkey defaults` — the live resolved tree (defaults + user

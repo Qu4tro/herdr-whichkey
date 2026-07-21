@@ -17,7 +17,7 @@ navigation only.
 
 ### Surface: bottom strip
 
-Full-width strip (~6–8 rows) in a popup plugin pane, keys in columns, `»`
+Full-width strip (~5–7 rows) in a popup plugin pane, keys in columns, `»`
 marks groups. Chosen over a centered popup (occludes content) and a
 full-screen modal (most disruptive). Breadcrumb of the current group path in
 the strip's border title.

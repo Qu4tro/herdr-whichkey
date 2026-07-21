@@ -196,6 +196,20 @@ fn pane_in_tab(v: &serde_json::Value, tab: &str) -> Option<String> {
 
 // ── split-surface sizing ────────────────────────────────────────────────
 
+/// Retitle our own pane — the breadcrumb lives in the border title
+/// (docs/design.md), so the body doesn't spend a row on it. Best-effort
+/// and fire-and-forget: a keystroke must never wait on the herdr CLI.
+pub fn set_pane_title(title: &str) {
+    let Some(own) = std::env::var("HERDR_PANE_ID").ok().filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let _ = Command::new(herdr_bin())
+        .args(["pane", "rename", &own, title])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 /// Shrink our bottom-split pane to `target` rows before the first frame.
 /// Plugin splits always open at ratio 0.5 and take no ratio flag, and
 /// `pane resize` on a bottom-most pane can only grow it — so the shrink
@@ -265,7 +279,7 @@ pub fn fit_split_height(target: u16) {
 /// our (second) pane out at `target` rows; None when there is nothing
 /// (safe) to do. Single-call amounts cap out around 0.5, which a
 /// 0.5-ratio split never needs; the server also clamps ratios to 0.9, so
-/// on very tall tabs the strip bottoms out at 10% instead of 8 rows.
+/// on very tall tabs the strip bottoms out at 10% instead of the target.
 fn fit_amount(ratio_now: f64, split_h: u64, target: u64) -> Option<f64> {
     if split_h <= target {
         return None;

@@ -12,6 +12,7 @@ use crossterm::{cursor, execute, queue, style, terminal};
 use crate::context::HerdrContext;
 use crate::dispatch;
 use crate::keys::display_key;
+use crate::layout::{self, LayoutConfig};
 use crate::model::{Node, NodeKind};
 use crate::theme::Palette;
 
@@ -54,14 +55,25 @@ impl Drop for TermGuard {
     }
 }
 
-pub fn run(tree: &[Node], pal: &Palette, ctx: &HerdrContext) -> Result<Outcome> {
+pub fn run(tree: &[Node], pal: &Palette, lay: &LayoutConfig, ctx: &HerdrContext) -> Result<Outcome> {
     let _guard = TermGuard::enter()?;
     let mut stack: Vec<(&[Node], String)> = vec![(tree, "whichkey".into())];
     let mut notice = Notice::None;
+    // The breadcrumb lives in the pane border title, not the body —
+    // starts as "whichkey" from the manifest, follows the group path.
+    let mut title = String::from("whichkey");
 
     loop {
         let (level, _) = *stack.last().expect("stack never empty");
-        render(pal, &stack, level, &notice)?;
+        let want = std::iter::once("whichkey")
+            .chain(stack.iter().skip(1).map(|(_, l)| l.as_str()))
+            .collect::<Vec<_>>()
+            .join(" › ");
+        if want != title {
+            dispatch::set_pane_title(&want);
+            title = want;
+        }
+        render(pal, lay, &stack, level, &notice)?;
 
         match event::read()? {
             Event::Resize(_, _) => continue,
@@ -153,11 +165,19 @@ pub fn show_error(pal: &Palette, msg: &str) -> Result<()> {
     }
 }
 
-fn render(pal: &Palette, stack: &[(&[Node], String)], level: &[Node], notice: &Notice) -> Result<()> {
+fn render(
+    pal: &Palette,
+    lay: &LayoutConfig,
+    stack: &[(&[Node], String)],
+    level: &[Node],
+    notice: &Notice,
+) -> Result<()> {
     let mut out = std::io::stdout();
     let (cols, rows) = terminal::size().unwrap_or((80, 8));
     let cols_u = cols as usize;
-    let item_rows = rows.saturating_sub(2).max(1);
+    // No title row — the breadcrumb is the pane border title. Only the
+    // footer line is carved off the item area.
+    let item_rows = rows.saturating_sub(1).max(1);
 
     queue!(out, terminal::BeginSynchronizedUpdate, SetBackgroundColor(pal.bg))?;
     // Repaint every row from column 0; UntilNewLine fills the tail with the
@@ -166,47 +186,27 @@ fn render(pal: &Palette, stack: &[(&[Node], String)], level: &[Node], notice: &N
         queue!(out, cursor::MoveTo(0, y), terminal::Clear(terminal::ClearType::UntilNewLine))?;
     }
 
-    // Title: breadcrumb of where we are.
-    let crumb = stack.iter().skip(1).map(|(_, l)| l.as_str()).collect::<Vec<_>>().join(" › ");
-    queue!(
-        out,
-        cursor::MoveTo(0, 0),
-        SetForegroundColor(pal.accent),
-        SetAttribute(Attribute::Bold),
-        style::Print(" whichkey"),
-        SetAttribute(Attribute::Reset),
-        SetBackgroundColor(pal.bg)
-    )?;
-    if !crumb.is_empty() {
-        queue!(
-            out,
-            SetForegroundColor(pal.dim),
-            style::Print(" › "),
-            SetForegroundColor(pal.fg),
-            style::Print(clip(&crumb, cols_u.saturating_sub(13)))
-        )?;
-    }
-
-    // Items, column-major.
+    // Items form a footer-style grid: the strip width picks the column
+    // count (unless `columns` pins it), taffy positions the grid with
+    // the `[layout]` distribution knobs — space-evenly both ways by
+    // default.
     let texts: Vec<(String, String, bool)> = level
         .iter()
         .map(|n| (display_key(n.key), n.label.clone(), n.is_group()))
         .collect();
-    let col_width = texts
+    let item_width = texts
         .iter()
         .map(|(k, l, g)| k.chars().count() + 2 + l.chars().count() + if *g { 2 } else { 0 })
         .max()
-        .unwrap_or(0)
-        + 3;
-    for (i, (key, label, group)) in texts.iter().enumerate() {
-        let (col, row) = column_major(i, item_rows as usize);
-        let x = 1 + col * col_width;
-        if x + col_width > cols_u + 1 {
-            continue; // off-screen column; live validation decides if we page
+        .unwrap_or(0);
+    let places = layout::positions(texts.len(), item_width, cols_u, item_rows as usize, lay)?;
+    for ((key, label, group), (x, y)) in texts.iter().zip(places) {
+        if x + item_width > cols_u + 1 || y >= item_rows as usize {
+            continue; // off-screen; live validation decides if we page
         }
         queue!(
             out,
-            cursor::MoveTo(x as u16, 1 + row as u16),
+            cursor::MoveTo(x as u16, y as u16),
             SetForegroundColor(pal.accent),
             style::Print(key),
             SetForegroundColor(pal.dim),
@@ -247,11 +247,6 @@ fn render(pal: &Palette, stack: &[(&[Node], String)], level: &[Node], notice: &N
     Ok(())
 }
 
-/// Index → (column, row) filling top-to-bottom, then left-to-right.
-fn column_major(index: usize, rows: usize) -> (usize, usize) {
-    (index / rows.max(1), index % rows.max(1))
-}
-
 fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -264,15 +259,6 @@ fn clip(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn column_major_fills_down_first() {
-        // 6 rows available: items 0..6 are column 0, 6..12 column 1.
-        assert_eq!(column_major(0, 6), (0, 0));
-        assert_eq!(column_major(5, 6), (0, 5));
-        assert_eq!(column_major(6, 6), (1, 0));
-        assert_eq!(column_major(13, 6), (2, 1));
-    }
 
     #[test]
     fn clipping() {
