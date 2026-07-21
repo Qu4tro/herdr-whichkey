@@ -1,0 +1,35 @@
+# Push/PR gate: formatting, lints, tests. The release workflow re-runs the
+# tests on every target triple; this one only needs a single runner, so it
+# checks the things that are host-independent and fails fast.
+#
+# Lints are denied, not warned — a warning nobody sees is not a gate.
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: >
+          rustup update --no-self-update stable && rustup default stable
+          && rustup component add rustfmt clippy
+      - name: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: test
+        run: cargo test
