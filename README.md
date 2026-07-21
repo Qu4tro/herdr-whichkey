@@ -36,6 +36,7 @@ The strip docks as a 7-row split under the pane you're in and puts the
 layout back when it closes. Esc goes back up a level (and closes from the
 root), Backspace also goes back, Ctrl+C always closes — and pressing the
 trigger again closes the menu. Unknown keys just hint; nothing flashes.
+Items are [clickable](#mouse) too.
 
 ## Defaults
 
@@ -80,6 +81,35 @@ change.
 - `stick = true` keeps the menu open for repeatable actions (resize). Set it on
   each action item — it isn't inherited, and a group that sets it is rejected.
 - `requires = "binary"` hides the item unless the binary is on PATH.
+
+## Mouse
+
+The strip is clickable as well as typeable — herdr forwards mouse input into
+plugin panes, whatever its own `ui.mouse_capture` is set to
+(see [docs/spike-mouse.md](docs/spike-mouse.md)).
+
+- **Click an item** to fire it, exactly as its key would: `stick = true` items
+  keep the menu open, everything else closes it.
+- **Click a group** to descend into it. **Click empty strip space** to go back
+  up one level — Backspace, not close, so a stray click is never destructive.
+- The item under the pointer highlights, so you can see what you'd hit.
+- The scroll wheel does nothing; the menu always fits on screen.
+
+Two herdr quirks worth knowing, neither of them ours to fix:
+
+- Under herdr's default `ui.mouse_capture = true`, **right-click over the strip
+  opens herdr's own pane menu** — it never reaches the plugin. Right-click
+  ascends a level only if you run with `mouse_capture = false` or set a
+  `right_click_passthrough_modifier`.
+- While the menu is open it owns the mouse in its own rows, so herdr's
+  drag-to-select doesn't work over them (shift-drag isn't an escape hatch
+  either — herdr forwards that too). Turn the whole thing off if you'd rather
+  keep selection:
+
+```toml
+[ui]
+mouse = false     # keyboard-only; the strip stops requesting mouse input
+```
 
 ## Layout
 

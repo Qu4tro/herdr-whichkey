@@ -10,6 +10,7 @@ use crate::keys;
 use crate::layout::LayoutConfig;
 use crate::model::{fallback_label, leaf_from_spec, Entry, ItemSpec, Node, NodeKind};
 use crate::theme::ThemeOverrides;
+use crate::ui::UiConfig;
 
 pub const DEFAULTS_TOML: &str = include_str!("defaults.toml");
 
@@ -22,6 +23,8 @@ struct FileConfig {
     theme: ThemeOverrides,
     #[serde(default)]
     layout: LayoutConfig,
+    #[serde(default)]
+    ui: UiConfig,
 }
 
 pub struct Config {
@@ -29,6 +32,7 @@ pub struct Config {
     pub entries: Vec<(String, ItemSpec)>,
     pub theme: ThemeOverrides,
     pub layout: LayoutConfig,
+    pub ui: UiConfig,
 }
 
 /// The user's config file path: plugin config dir when running under herdr,
@@ -87,7 +91,7 @@ pub fn load(seed_if_missing: bool) -> Result<Config> {
         }
     }
 
-    Ok(Config { entries, theme: user.theme, layout: user.layout })
+    Ok(Config { entries, theme: user.theme, layout: user.layout, ui: user.ui })
 }
 
 fn normalize_path(path: &str) -> String {

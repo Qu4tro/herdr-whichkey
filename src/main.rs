@@ -46,6 +46,10 @@ fn run_menu() -> Result<()> {
             Err(_) => return,
         };
         if signals.forever().next().is_some() {
+            // Drop doesn't run, so undo mouse reporting by hand. Unconditional:
+            // disabling modes that were never enabled is a no-op, and herdr
+            // resets the host's own mouse state when our pane dies anyway.
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
             if let Some(path) = std::env::var_os("WHICHKEY_DONE_FIFO") {
                 write_done_fifo(std::path::Path::new(&path));
             }
@@ -72,7 +76,7 @@ fn run_menu() -> Result<()> {
         Err(_) => theme::resolve(&Default::default()),
     };
 
-    let (tree, ctx, lay) = match loaded.and_then(load_tree) {
+    let (tree, ctx, lay, uic) = match loaded.and_then(load_tree) {
         Ok(v) => v,
         Err(e) => return ui::show_error(&pal, &format!("{e:#}")),
     };
@@ -80,7 +84,7 @@ fn run_menu() -> Result<()> {
         return ui::show_error(&pal, "menu is empty — every item was hidden or unavailable");
     }
 
-    match ui::run(&tree, &pal, &lay, &ctx)? {
+    match ui::run(&tree, &pal, &lay, &uic, &ctx)? {
         ui::Outcome::Closed => {}
         // Deferred leaves run after the terminal is restored; the popup
         // stays visible for the few ms this takes, which beats dispatching
@@ -94,7 +98,9 @@ fn run_menu() -> Result<()> {
     Ok(())
 }
 
-fn load_tree(cfg: config::Config) -> Result<(Vec<Node>, HerdrContext, layout::LayoutConfig)> {
+type Menu = (Vec<Node>, HerdrContext, layout::LayoutConfig, ui::UiConfig);
+
+fn load_tree(cfg: config::Config) -> Result<Menu> {
     let ctx = HerdrContext::from_env()?;
     let tree = config::build_tree(&cfg.entries)?;
 
@@ -103,7 +109,7 @@ fn load_tree(cfg: config::Config) -> Result<(Vec<Node>, HerdrContext, layout::La
     // Probe failure (no server?) keeps action items visible — hiding the
     // whole menu because one probe failed would be the surprising choice.
     let have_plugin = |p: &str| plugins.as_ref().map(|set| set.contains(p)).unwrap_or(true);
-    Ok((model::prune_unavailable(tree, &have_bin, &have_plugin), ctx, cfg.layout))
+    Ok((model::prune_unavailable(tree, &have_bin, &have_plugin), ctx, cfg.layout, cfg.ui))
 }
 
 /// `herdr-whichkey defaults` — the live resolved tree (defaults + user

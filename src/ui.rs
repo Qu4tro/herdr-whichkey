@@ -5,9 +5,13 @@
 use std::io::Write as _;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use crossterm::style::{Attribute, SetAttribute, SetBackgroundColor, SetForegroundColor};
 use crossterm::{cursor, execute, queue, style, terminal};
+use serde::Deserialize;
 
 use crate::context::HerdrContext;
 use crate::dispatch;
@@ -15,6 +19,28 @@ use crate::keys::display_key;
 use crate::layout::{self, LayoutConfig};
 use crate::model::{Node, NodeKind};
 use crate::theme::Palette;
+
+/// `[ui]` section of whichkey.toml.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiConfig {
+    /// Click items to fire them. On by default: herdr forwards mouse into
+    /// the pane whatever its own `ui.mouse_capture` is set to (see
+    /// docs/spike-mouse.md). Turn it off to keep herdr's drag-to-select
+    /// working over the strip's rows.
+    #[serde(default = "yes")]
+    pub mouse: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self { mouse: true }
+    }
+}
 
 /// How the menu ended.
 pub enum Outcome {
@@ -31,19 +57,27 @@ enum Notice {
     Error(String),
 }
 
-/// Raw-mode/cursor/wrap guard so every exit path restores the terminal.
-struct TermGuard;
+/// Raw-mode/cursor/wrap/mouse guard so every exit path restores the terminal.
+struct TermGuard {
+    mouse: bool,
+}
 
 impl TermGuard {
-    fn enter() -> Result<Self> {
+    fn enter(mouse: bool) -> Result<Self> {
         terminal::enable_raw_mode()?;
         execute!(std::io::stdout(), cursor::Hide, terminal::DisableLineWrap)?;
-        Ok(Self)
+        if mouse {
+            execute!(std::io::stdout(), EnableMouseCapture)?;
+        }
+        Ok(Self { mouse })
     }
 }
 
 impl Drop for TermGuard {
     fn drop(&mut self) {
+        if self.mouse {
+            let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        }
         let _ = execute!(
             std::io::stdout(),
             SetAttribute(Attribute::Reset),
@@ -59,39 +93,53 @@ pub fn run(
     tree: &[Node],
     pal: &Palette,
     lay: &LayoutConfig,
+    uic: &UiConfig,
     ctx: &HerdrContext,
 ) -> Result<Outcome> {
-    let _guard = TermGuard::enter()?;
+    let _guard = TermGuard::enter(uic.mouse)?;
     let mut stack: Vec<(&[Node], String)> = vec![(tree, "whichkey".into())];
     let mut notice = Notice::None;
     // The breadcrumb lives in the pane border title, not the body —
     // starts as "whichkey" from the manifest, follows the group path.
     let mut title = String::from("whichkey");
+    let mut hover: Option<usize> = None;
+    // Any-motion mouse reporting means events we ignore arrive in bulk;
+    // repaint only when something actually changed.
+    let mut dirty = true;
+    // Geometry of the frame on screen. Clicks resolve against this, never
+    // against a fresh terminal::size(): a resize and a click can both be
+    // pending, and hit-testing the click against a layout that was never
+    // drawn fires whatever the user didn't aim at. Resize sets dirty, so
+    // the next turn re-renders and refreshes this before the next event.
+    let mut frame = (0u16, 0u16);
 
     loop {
         let (level, _) = *stack.last().expect("stack never empty");
-        let want = std::iter::once("whichkey")
-            .chain(stack.iter().skip(1).map(|(_, l)| l.as_str()))
-            .collect::<Vec<_>>()
-            .join(" › ");
-        if want != title {
-            dispatch::set_pane_title(&want);
-            title = want;
+        if dirty {
+            let want = std::iter::once("whichkey")
+                .chain(stack.iter().skip(1).map(|(_, l)| l.as_str()))
+                .collect::<Vec<_>>()
+                .join(" › ");
+            if want != title {
+                dispatch::set_pane_title(&want);
+                title = want;
+            }
+            frame = render(pal, lay, &stack, level, &notice, hover)?;
+            dirty = false;
         }
-        render(pal, lay, &stack, level, &notice)?;
 
         match event::read()? {
-            Event::Resize(_, _) => continue,
+            Event::Resize(_, _) => dirty = true,
             Event::Key(KeyEvent { code, modifiers, kind, .. })
                 if kind == KeyEventKind::Press || kind == KeyEventKind::Repeat =>
             {
+                dirty = true;
                 match code {
                     // Esc walks back up and only closes from the root —
                     // ctrl+c (and the launcher's toggle) always closes.
                     KeyCode::Esc => {
                         if stack.len() > 1 {
-                            stack.pop();
-                            notice = Notice::None;
+                            ascend(&mut stack, &mut notice, &mut hover);
                         } else {
                             return Ok(Outcome::Closed);
                         }
@@ -99,30 +147,57 @@ pub fn run(
                     KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(Outcome::Closed)
                     }
-                    KeyCode::Backspace => {
-                        if stack.len() > 1 {
-                            stack.pop();
-                        }
-                        notice = Notice::None;
-                    }
+                    KeyCode::Backspace => ascend(&mut stack, &mut notice, &mut hover),
                     KeyCode::Char(c) => match level.iter().find(|n| n.key == c) {
-                        Some(node) => match &node.kind {
-                            NodeKind::Group(children) => {
-                                stack.push((children, node.label.clone()));
-                                notice = Notice::None;
+                        Some(node) => {
+                            if let Some(out) =
+                                choose(node, &mut stack, &mut notice, &mut hover, ctx)
+                            {
+                                return Ok(out);
                             }
-                            NodeKind::Leaf(leaf) if node.stick => {
-                                notice = match dispatch::execute(leaf, ctx) {
-                                    Ok(()) => Notice::None,
-                                    Err(e) => Notice::Error(format!("{e:#}")),
-                                };
-                            }
-                            NodeKind::Leaf(leaf) => {
-                                return Ok(Outcome::Deferred(leaf.clone(), node.label.clone()))
-                            }
-                        },
+                        }
                         None => notice = Notice::Info(format!("no binding: {}", display_key(c))),
                     },
+                    _ => {}
+                }
+            }
+            Event::Mouse(MouseEvent { kind, column, row, .. }) => {
+                let (cols, rows) = frame;
+                match kind {
+                    // Act on the press: the release lands right behind it
+                    // and must not fire a sticky item a second time.
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        dirty = true;
+                        match hit(level, lay, cols, rows, column, row)? {
+                            Some(i) => {
+                                if let Some(out) =
+                                    choose(&level[i], &mut stack, &mut notice, &mut hover, ctx)
+                                {
+                                    return Ok(out);
+                                }
+                            }
+                            // Dead space is the ascend gesture — Backspace,
+                            // not close: a stray click must not be destructive.
+                            None => ascend(&mut stack, &mut notice, &mut hover),
+                        }
+                    }
+                    // Only reaches us when herdr isn't eating it for its own
+                    // pane menu (ui.mouse_capture = false, or a
+                    // right_click_passthrough_modifier). Same ascend.
+                    MouseEventKind::Down(MouseButton::Right) => {
+                        dirty = true;
+                        ascend(&mut stack, &mut notice, &mut hover);
+                    }
+                    MouseEventKind::Moved => {
+                        let at = hit(level, lay, cols, rows, column, row)?;
+                        if at != hover {
+                            hover = at;
+                            dirty = true;
+                        }
+                    }
+                    // Scroll has no meaning in a menu that fits on screen,
+                    // and herdr hands us the wheel instead of scrolling its
+                    // own scrollback — ignore it rather than invent one.
                     _ => {}
                 }
             }
@@ -131,10 +206,48 @@ pub fn run(
     }
 }
 
+/// One level up, or nothing at the root. Backspace, empty-space click and
+/// right click all land here.
+fn ascend(stack: &mut Vec<(&[Node], String)>, notice: &mut Notice, hover: &mut Option<usize>) {
+    if stack.len() > 1 {
+        stack.pop();
+        *hover = None;
+    }
+    *notice = Notice::None;
+}
+
+/// Pick an item: descend a group, run a sticky leaf in place, hand a plain
+/// leaf back to the caller to run after the pane is gone. Shared by the key
+/// and click paths so a click behaves exactly like the key.
+fn choose<'a>(
+    node: &'a Node,
+    stack: &mut Vec<(&'a [Node], String)>,
+    notice: &mut Notice,
+    hover: &mut Option<usize>,
+    ctx: &HerdrContext,
+) -> Option<Outcome> {
+    match &node.kind {
+        NodeKind::Group(children) => {
+            stack.push((children, node.label.clone()));
+            *notice = Notice::None;
+            *hover = None; // indices belong to the level that just left
+            None
+        }
+        NodeKind::Leaf(leaf) if node.stick => {
+            *notice = match dispatch::execute(leaf, ctx) {
+                Ok(()) => Notice::None,
+                Err(e) => Notice::Error(format!("{e:#}")),
+            };
+            None
+        }
+        NodeKind::Leaf(leaf) => Some(Outcome::Deferred(leaf.clone(), node.label.clone())),
+    }
+}
+
 /// Config errors render in the strip itself — a popup that opens and
 /// instantly vanishes with no explanation is the worst outcome.
 pub fn show_error(pal: &Palette, msg: &str) -> Result<()> {
-    let _guard = TermGuard::enter()?;
+    let _guard = TermGuard::enter(false)?;
     let mut out = std::io::stdout();
     let (cols, rows) = terminal::size().unwrap_or((80, 8));
     queue!(out, terminal::BeginSynchronizedUpdate, SetBackgroundColor(pal.bg))?;
@@ -170,19 +283,75 @@ pub fn show_error(pal: &Palette, msg: &str) -> Result<()> {
     }
 }
 
+/// The item cells of a level: each item's drawn parts, the uniform cell
+/// width, and the (x, y) taffy puts each cell at. Rendering and hit-testing
+/// must agree down to the cell, so both come from here.
+#[allow(clippy::type_complexity)]
+fn grid(
+    level: &[Node],
+    lay: &LayoutConfig,
+    cols: usize,
+    item_rows: usize,
+) -> Result<(Vec<(String, String, bool)>, usize, Vec<(usize, usize)>)> {
+    let texts: Vec<(String, String, bool)> =
+        level.iter().map(|n| (display_key(n.key), n.label.clone(), n.is_group())).collect();
+    let item_width = texts
+        .iter()
+        .map(|(k, l, g)| k.chars().count() + 2 + l.chars().count() + if *g { 2 } else { 0 })
+        .max()
+        .unwrap_or(0);
+    let places = layout::positions(texts.len(), item_width, cols, item_rows, lay)?;
+    Ok((texts, item_width, places))
+}
+
+/// Off-screen cells are drawn by nobody, so they are clickable by nobody.
+fn drawn(x: usize, y: usize, item_width: usize, cols: usize, item_rows: usize) -> bool {
+    x + item_width <= cols + 1 && y < item_rows
+}
+
+/// Which item covers pane cell (col, row), if any. The whole `item_width`
+/// cell is the target, not just the drawn text — the gutters between
+/// columns and the footer line stay dead space, which is the ascend gesture.
+fn hit(
+    level: &[Node],
+    lay: &LayoutConfig,
+    cols: u16,
+    rows: u16,
+    col: u16,
+    row: u16,
+) -> Result<Option<usize>> {
+    // No `.max(1)`: in a 0- or 1-row pane the footer covers everything, so
+    // there are no item rows and `row >= item_rows` rejects every click.
+    // Clamping here instead would put a phantom item under the footer text.
+    let (cols, item_rows) = (cols as usize, rows.saturating_sub(1) as usize);
+    let (col, row) = (col as usize, row as usize);
+    if row >= item_rows {
+        return Ok(None);
+    }
+    let (_, item_width, places) = grid(level, lay, cols, item_rows)?;
+    Ok(places.iter().position(|&(x, y)| {
+        drawn(x, y, item_width, cols, item_rows) && row == y && col >= x && col < x + item_width
+    }))
+}
+
+/// Draws a frame and reports the (cols, rows) it drew at, so hit-testing
+/// can use the geometry the user is actually looking at.
 fn render(
     pal: &Palette,
     lay: &LayoutConfig,
     stack: &[(&[Node], String)],
     level: &[Node],
     notice: &Notice,
-) -> Result<()> {
+    hover: Option<usize>,
+) -> Result<(u16, u16)> {
     let mut out = std::io::stdout();
     let (cols, rows) = terminal::size().unwrap_or((80, 8));
     let cols_u = cols as usize;
     // No title row — the breadcrumb is the pane border title. Only the
-    // footer line is carved off the item area.
-    let item_rows = rows.saturating_sub(1).max(1);
+    // footer line is carved off the item area. No `.max(1)`: a 0- or 1-row
+    // pane is all footer, and `hit()` counts it as having no item rows —
+    // drawing an item there would paint something no click can reach.
+    let item_rows = rows.saturating_sub(1);
 
     queue!(out, terminal::BeginSynchronizedUpdate, SetBackgroundColor(pal.bg))?;
     // Repaint every row from column 0; UntilNewLine fills the tail with the
@@ -195,17 +364,23 @@ fn render(
     // count (unless `columns` pins it), taffy positions the grid with
     // the `[layout]` distribution knobs — space-evenly both ways by
     // default.
-    let texts: Vec<(String, String, bool)> =
-        level.iter().map(|n| (display_key(n.key), n.label.clone(), n.is_group())).collect();
-    let item_width = texts
-        .iter()
-        .map(|(k, l, g)| k.chars().count() + 2 + l.chars().count() + if *g { 2 } else { 0 })
-        .max()
-        .unwrap_or(0);
-    let places = layout::positions(texts.len(), item_width, cols_u, item_rows as usize, lay)?;
-    for ((key, label, group), (x, y)) in texts.iter().zip(places) {
-        if x + item_width > cols_u + 1 || y >= item_rows as usize {
+    let (texts, item_width, places) = grid(level, lay, cols_u, item_rows as usize)?;
+    for (i, ((key, label, group), (x, y))) in texts.iter().zip(places).enumerate() {
+        if !drawn(x, y, item_width, cols_u, item_rows as usize) {
             continue; // off-screen; live validation decides if we page
+        }
+        // The hovered cell is painted whole, so the click target is visible
+        // — with the raised background, or reverse video when the palette
+        // has none of its own (ANSI mode).
+        let hot = hover == Some(i);
+        if hot {
+            queue!(out, cursor::MoveTo(x as u16, y as u16))?;
+            if pal.surface == pal.bg {
+                queue!(out, SetAttribute(Attribute::Reverse))?;
+            } else {
+                queue!(out, SetBackgroundColor(pal.surface))?;
+            }
+            queue!(out, style::Print(" ".repeat(item_width.min(cols_u.saturating_sub(x)))))?;
         }
         queue!(
             out,
@@ -219,6 +394,9 @@ fn render(
         )?;
         if *group {
             queue!(out, SetForegroundColor(pal.dim), style::Print(" ›"))?;
+        }
+        if hot {
+            queue!(out, SetAttribute(Attribute::Reset), SetBackgroundColor(pal.bg))?;
         }
     }
 
@@ -247,7 +425,7 @@ fn render(
 
     queue!(out, terminal::EndSynchronizedUpdate)?;
     out.flush()?;
-    Ok(())
+    Ok((cols, rows))
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -262,6 +440,115 @@ fn clip(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Leaf, RunIn};
+
+    fn leaf(key: char, label: &str) -> Node {
+        Node {
+            key,
+            label: label.into(),
+            stick: false,
+            requires: None,
+            requires_plugin: None,
+            kind: NodeKind::Leaf(Leaf::Run {
+                cmd: "true".into(),
+                run_in: RunIn::Background,
+                cwd: None,
+            }),
+        }
+    }
+
+    /// 8 leaves 15 chars wide: item_width 18, the live strip's root level.
+    fn level() -> Vec<Node> {
+        "abcdefgh".chars().map(|c| leaf(c, "fifteen-chars-x")).collect()
+    }
+
+    #[test]
+    fn clicks_map_back_to_the_item_under_them() {
+        let (lay, level) = (LayoutConfig::default(), level());
+        // Same geometry as layout::tests::default_positions_footer_grid:
+        // 179 cols, 5 rows (4 item rows + footer), 4×2 cells 18 wide.
+        let at = |col, row| hit(&level, &lay, 179, 5, col, row).unwrap();
+        assert_eq!(at(21, 1), Some(0)); // first cell, first column
+        assert_eq!(at(30, 1), Some(0)); // mid-cell
+        assert_eq!(at(38, 1), Some(0)); // last column of the cell
+        assert_eq!(at(21, 3), Some(1)); // column-major: second item is below
+        assert_eq!(at(61, 1), Some(2));
+        assert_eq!(at(140, 3), Some(7));
+        assert_eq!(at(20, 1), None); // one column left of the first cell
+        assert_eq!(at(39, 1), None); // gutter between columns
+        assert_eq!(at(21, 0), None); // blank row above (space-around)
+        assert_eq!(at(21, 2), None); // blank row between the two item rows
+    }
+
+    #[test]
+    fn the_same_click_resolves_differently_at_a_different_size() {
+        // Why the loop hit-tests against the frame it drew instead of a
+        // fresh terminal::size(): resolving a click with the wrong geometry
+        // is not a near miss, it is a different item — or none at all.
+        let (lay, level) = (LayoutConfig::default(), level());
+        let (col, row) = (21, 3);
+        assert_eq!(hit(&level, &lay, 179, 5, col, row).unwrap(), Some(1)); // the drawn frame
+        assert_eq!(hit(&level, &lay, 100, 5, col, row).unwrap(), Some(2)); // narrower: other item
+        assert_eq!(hit(&level, &lay, 179, 8, col, row).unwrap(), None); // taller: dead space
+    }
+
+    #[test]
+    fn footer_row_is_dead_space() {
+        let (lay, level) = (LayoutConfig::default(), level());
+        // Row 4 of 5 is the footer, so nothing there is clickable — that is
+        // what makes clicking it ascend instead of firing an item.
+        for col in 0..179 {
+            assert_eq!(hit(&level, &lay, 179, 5, col, 4).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn a_pane_with_no_item_rows_draws_and_hits_nothing() {
+        // 1 row is all footer. Nothing may be clickable there — a click
+        // must ascend, not fire whatever item row 0 would have held — and
+        // nothing may be drawn there either, or the strip would show items
+        // that reject every click. Both sides derive item_rows the same way.
+        let (lay, level) = (LayoutConfig::default(), level());
+        for rows in 0..=1u16 {
+            for col in 0..179u16 {
+                assert_eq!(hit(&level, &lay, 179, rows, col, 0).unwrap(), None);
+            }
+            let item_rows = rows.saturating_sub(1) as usize; // as render() computes it
+            let (_, item_width, places) = grid(&level, &lay, 179, item_rows).unwrap();
+            let shown: Vec<_> =
+                places.iter().filter(|&&(x, y)| drawn(x, y, item_width, 179, item_rows)).collect();
+            assert!(shown.is_empty(), "{rows}-row pane draws unclickable cells {shown:?}");
+        }
+    }
+
+    #[test]
+    fn cells_the_renderer_skips_are_not_clickable() {
+        // Strip too narrow for the columns: cells past the right edge are
+        // never drawn, so clicks that land in them must miss.
+        let (lay, level) = (LayoutConfig::default(), level());
+        let (_, item_width, places) = grid(&level, &lay, 20, 4).unwrap();
+        let skipped: Vec<_> =
+            places.iter().filter(|&&(x, y)| !drawn(x, y, item_width, 20, 4)).collect();
+        assert!(!skipped.is_empty(), "expected overflow at 20 columns, got {places:?}");
+        for col in 0..20u16 {
+            for row in 0..4u16 {
+                if let Some(i) = hit(&level, &lay, 20, 5, col, row).unwrap() {
+                    let (x, y) = places[i];
+                    assert!(drawn(x, y, item_width, 20, 4), "hit an undrawn cell at {col},{row}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn group_cells_are_wider_by_the_marker() {
+        let lay = LayoutConfig::default();
+        let mut level = vec![leaf('a', "same-label-here")];
+        let (_, leaf_width, _) = grid(&level, &lay, 179, 4).unwrap();
+        level[0].kind = NodeKind::Group(Vec::new());
+        let (_, group_width, _) = grid(&level, &lay, 179, 4).unwrap();
+        assert_eq!(group_width, leaf_width + 2); // the " ›" is part of the target
+    }
 
     #[test]
     fn clipping() {
