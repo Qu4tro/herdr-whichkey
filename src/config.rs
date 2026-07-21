@@ -191,6 +191,13 @@ fn insert(roots: &mut Vec<Node>, path: &str, seq: &[char], spec: &ItemSpec) -> R
 
 fn make_node(path: &str, key: char, spec: &ItemSpec) -> Result<Node> {
     let kind = if spec.is_group_only() {
+        // stick is per-action and never inherited, so on a group it did
+        // nothing at all — refuse it instead of silently dropping it.
+        if spec.stick {
+            bail!(
+                "\"{path}\": stick = true needs an action on the same item — it isn't inherited, so set it on each child item that should repeat"
+            );
+        }
         NodeKind::Group(Vec::new())
     } else {
         NodeKind::Leaf(leaf_from_spec(path, spec)?)
@@ -316,6 +323,46 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("move the action to a child key"), "{err}");
+    }
+
+    #[test]
+    fn stick_on_group_rejected() {
+        let err = tree_of(
+            r#"[menu]
+"r"   = { label = "resize", stick = true }
+"r h" = { label = "left", herdr = "pane resize --direction left", stick = true }
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("\"r\": stick = true"), "{err}");
+    }
+
+    /// Same rejection when the group node already exists — this ordering
+    /// takes the relabel branch in `insert`, which used to drop stick.
+    #[test]
+    fn stick_on_existing_group_rejected() {
+        let err = tree_of(
+            r#"[menu]
+"r h" = { label = "left", herdr = "pane resize --direction left", stick = true }
+"r"   = { label = "resize", stick = true }
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("\"r\": stick = true"), "{err}");
+    }
+
+    #[test]
+    fn stick_on_leaf_accepted() {
+        let tree = tree_of(
+            r#"[menu]
+"r h" = { label = "left", herdr = "pane resize --direction left", stick = true }
+"#,
+        )
+        .unwrap();
+        assert!(tree[0].children()[0].stick);
+        assert!(!tree[0].stick); // the implicit parent group stays unstuck
     }
 
     #[test]

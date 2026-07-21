@@ -77,7 +77,8 @@ change.
 - Placeholders `{pane}` `{tab}` `{workspace}` `{cwd}` `{stamp}` expand to where
   you were when the menu opened; `~` and `$VARS` also expand where a shell
   would expand them.
-- `stick = true` keeps the menu open for repeatable actions (resize).
+- `stick = true` keeps the menu open for repeatable actions (resize). Set it on
+  each action item — it isn't inherited, and a group that sets it is rejected.
 - `requires = "binary"` hides the item unless the binary is on PATH.
 
 ## Layout
