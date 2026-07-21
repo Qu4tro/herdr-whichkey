@@ -12,6 +12,8 @@ use crossterm::event::{
 use crossterm::style::{Attribute, SetAttribute, SetBackgroundColor, SetForegroundColor};
 use crossterm::{cursor, execute, queue, style, terminal};
 use serde::Deserialize;
+use unicode_segmentation::UnicodeSegmentation as _;
+use unicode_width::UnicodeWidthStr as _;
 
 use crate::context::HerdrContext;
 use crate::dispatch;
@@ -283,6 +285,15 @@ pub fn show_error(pal: &Palette, msg: &str) -> Result<()> {
     }
 }
 
+/// Terminal cells `s` draws in. Not `chars().count()`: that counts Unicode
+/// scalar values, which is not what the cursor advances by — CJK and most
+/// emoji take two cells, combining marks take none, and a ZWJ sequence is
+/// several scalars in one two-cell glyph. Every width in this module comes
+/// from here so the strip's arithmetic is in the terminal's own units.
+fn width(s: &str) -> usize {
+    s.width()
+}
+
 /// The item cells of a level: each item's drawn parts, the uniform cell
 /// width, and the (x, y) taffy puts each cell at. Rendering and hit-testing
 /// must agree down to the cell, so both come from here.
@@ -297,7 +308,7 @@ fn grid(
         level.iter().map(|n| (display_key(n.key), n.label.clone(), n.is_group())).collect();
     let item_width = texts
         .iter()
-        .map(|(k, l, g)| k.chars().count() + 2 + l.chars().count() + if *g { 2 } else { 0 })
+        .map(|(k, l, g)| width(k) + 2 + width(l) + if *g { 2 } else { 0 })
         .max()
         .unwrap_or(0);
     let places = layout::positions(texts.len(), item_width, cols, item_rows, lay)?;
@@ -390,7 +401,7 @@ fn render(
             SetForegroundColor(pal.dim),
             style::Print("  "),
             SetForegroundColor(pal.fg),
-            style::Print(clip(label, cols_u.saturating_sub(x + key.chars().count() + 2)))
+            style::Print(clip(label, cols_u.saturating_sub(x + width(key) + 2)))
         )?;
         if *group {
             queue!(out, SetForegroundColor(pal.dim), style::Print(" ›"))?;
@@ -419,7 +430,7 @@ fn render(
             SetForegroundColor(pal.dim),
             style::Print(" · "),
             SetForegroundColor(color),
-            style::Print(clip(&text, cols_u.saturating_sub(hints.chars().count() + 3)))
+            style::Print(clip(&text, cols_u.saturating_sub(width(hints) + 3)))
         )?;
     }
 
@@ -428,11 +439,26 @@ fn render(
     Ok((cols, rows))
 }
 
+/// `s` cut to `max` cells, ellipsis included in the count. The cut lands on
+/// a grapheme boundary, never inside one: half a ZWJ sequence or a combining
+/// mark parted from its base is not something the terminal can draw. A
+/// double-width grapheme with one cell left is dropped whole, so the result
+/// can come up a cell short — the alternative is drawing past the edge.
 fn clip(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
+    if width(s) <= max {
         return s.to_string();
     }
-    let mut t: String = s.chars().take(max.saturating_sub(1)).collect();
+    let budget = max.saturating_sub(1); // the '…' takes a cell of its own
+    let mut t = String::new();
+    let mut used = 0;
+    for g in s.graphemes(true) {
+        let w = width(g);
+        if used + w > budget {
+            break;
+        }
+        t.push_str(g);
+        used += w;
+    }
     t.push('…');
     t
 }
@@ -461,6 +487,13 @@ mod tests {
     fn level() -> Vec<Node> {
         "abcdefgh".chars().map(|c| leaf(c, "fifteen-chars-x")).collect()
     }
+
+    // Labels whose cell count is not their scalar count, one per way that
+    // happens: wide glyphs, a mark that rides on its base, and a sequence
+    // the terminal joins into a single glyph.
+    const CJK: &str = "文件浏览器"; // 5 scalars, 10 cells
+    const ACUTE: &str = "e\u{301}cran"; // 6 scalars, 5 cells
+    const FAMILY: &str = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}"; // 5 scalars, 2 cells
 
     #[test]
     fn clicks_map_back_to_the_item_under_them() {
@@ -551,9 +584,74 @@ mod tests {
     }
 
     #[test]
+    fn item_width_counts_cells_not_scalars() {
+        let lay = LayoutConfig::default();
+        let cell = |label: &str| grid(&[leaf('a', label)], &lay, 179, 4).unwrap().1;
+        // One-cell key plus the two-space gap, then the label's own cells.
+        assert_eq!(cell("files"), 3 + 5);
+        assert_eq!(cell(CJK), 3 + 10); // two cells per glyph
+        assert_eq!(cell(ACUTE), 3 + 5); // the acute draws on the 'e', in no cell of its own
+        assert_eq!(cell(FAMILY), 3 + 2); // five scalars, one two-cell glyph
+    }
+
+    #[test]
+    fn wide_labels_keep_the_columns_apart() {
+        // The misalignment itself: a packed row of CJK labels. At the scalar
+        // count each cell would be 8 wide and the columns 10 apart, with 13
+        // cells of text drawn into each — every label bleeding into its
+        // neighbour. The cell count is what keeps them clear of each other.
+        let cfg: LayoutConfig =
+            toml::from_str("justify = \"start\"\ngutter = 2\ncolumns = 4\n").unwrap();
+        let level: Vec<Node> = "abcd".chars().map(|c| leaf(c, CJK)).collect();
+        let (_, item_width, places) = grid(&level, &cfg, 100, 4).unwrap();
+        assert_eq!(item_width, 13); // 1 key + 2 gap + 10 label
+        let mut xs: Vec<usize> = places.iter().map(|&(x, _)| x).collect();
+        xs.sort_unstable();
+        for w in xs.windows(2) {
+            assert!(w[1] - w[0] >= 3 + width(CJK), "columns {xs:?} overlap the drawn labels");
+        }
+    }
+
+    #[test]
+    fn every_cell_of_a_non_ascii_menu_hits_its_own_item() {
+        // Clicking any item still fires that item: the hit-test measures the
+        // cells the renderer laid out, whatever the labels are made of.
+        let lay = LayoutConfig::default();
+        let mut level = vec![leaf('a', CJK), leaf('b', ACUTE), leaf('c', FAMILY), leaf('d', CJK)];
+        level[3].kind = NodeKind::Group(Vec::new()); // the widest: label plus " ›"
+        let (_, item_width, places) = grid(&level, &lay, 179, 4).unwrap();
+        assert_eq!(item_width, 15);
+        for (i, &(x, y)) in places.iter().enumerate() {
+            assert!(drawn(x, y, item_width, 179, 4), "item {i} at {x},{y} is never drawn");
+            for col in x..x + item_width {
+                assert_eq!(hit(&level, &lay, 179, 5, col as u16, y as u16).unwrap(), Some(i));
+            }
+        }
+    }
+
+    #[test]
     fn clipping() {
         assert_eq!(clip("short", 10), "short");
         assert_eq!(clip("exactly-ten", 11), "exactly-ten");
         assert_eq!(clip("much too long for this", 8), "much to…");
+    }
+
+    #[test]
+    fn clipping_cuts_on_cell_and_grapheme_boundaries() {
+        // The budget is cells: five glyphs fill ten of them, and an odd
+        // budget leaves one spare rather than half-drawing a wide glyph.
+        assert_eq!(clip(CJK, 10), CJK);
+        assert_eq!(clip(CJK, 9), "文件浏览…");
+        assert_eq!(clip(CJK, 8), "文件浏…");
+        // A combining mark leaves with its base or not at all — never left
+        // behind to draw itself on whatever precedes it.
+        assert_eq!(clip(ACUTE, 3), "e\u{301}c…");
+        assert_eq!(clip(ACUTE, 2), "e\u{301}…");
+        // One glyph, five scalars: kept whole or dropped whole, never cut
+        // into a lone man and a dangling joiner.
+        let family = format!("{FAMILY} family");
+        assert_eq!(clip(&family, 9), family); // 2 + 1 + 6 cells, nothing to cut
+        assert_eq!(clip(&family, 3), format!("{FAMILY}…"));
+        assert_eq!(clip(&family, 2), "…");
     }
 }
