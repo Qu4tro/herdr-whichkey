@@ -72,7 +72,7 @@ fn run_menu() -> Result<()> {
         Err(_) => theme::resolve(&Default::default()),
     };
 
-    let (tree, ctx, lay) = match loaded.and_then(|cfg| load_tree(cfg)) {
+    let (tree, ctx, lay) = match loaded.and_then(load_tree) {
         Ok(v) => v,
         Err(e) => return ui::show_error(&pal, &format!("{e:#}")),
     };
