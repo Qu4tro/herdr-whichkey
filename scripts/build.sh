@@ -10,15 +10,16 @@ VERSION="v0.2.2"
 DEST_DIR="target/release"
 
 # Pinned sha256 of each release tarball, from the release's SHA256SUMS
-# asset. Updated as part of cutting a release (see .github/workflows/
-# release.yml). An empty pin means "no prebuilt for this triple yet" —
-# the source build takes over.
+# asset. Written by scripts/pin-release.sh, which release.yml runs after
+# publishing — edit these by hand and the next release overwrites you. An
+# empty pin means "no prebuilt for this triple yet" — the source build
+# takes over.
 sha_for() {
   case "$1" in
-    x86_64-unknown-linux-gnu)  echo "" ;;
-    aarch64-unknown-linux-gnu) echo "" ;;
-    aarch64-apple-darwin)      echo "" ;;
-    x86_64-apple-darwin)       echo "" ;;
+    x86_64-unknown-linux-gnu)  echo "d1fc2684af268e901efa80201ff9fc327892cba3806b2caa913a78eb72d54e5f" ;;
+    aarch64-unknown-linux-gnu) echo "7db5edc455c695890237626bfd6c5f09507fa6f1d85f90d54041fadf91814bfb" ;;
+    aarch64-apple-darwin)      echo "0249407d00875a3bc78fa81a28557e033c38a75adda96f9d49546123e8e343ee" ;;
+    x86_64-apple-darwin)       echo "3cbb3ed7a855d485bf2b8e95c64cd31bf189b02f763ed43d5625c7c5bd8f3ebf" ;;
     *)                         echo "" ;;
   esac
 }

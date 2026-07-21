@@ -1,7 +1,7 @@
 # Tag v* → build the four supported triples on native runners, publish a
-# GitHub release with tarballs + SHA256SUMS. After a release, copy the
-# sums into scripts/build.sh (sha_for) and bump its VERSION so installs
-# pick up the prebuilts.
+# GitHub release with tarballs + SHA256SUMS, then commit those sums into
+# scripts/build.sh so installs pick up the prebuilts. That last step used
+# to be a manual copy and was missed twice; see the pin job below.
 #
 # ubuntu-24.04-arm is free for public repos only — tag releases after the
 # repo is public, or that job won't schedule.
@@ -64,3 +64,34 @@ jobs:
           --repo "$GITHUB_REPOSITORY"
           --title "herdr-whichkey $GITHUB_REF_NAME"
           --generate-notes
+
+  # A tarball's checksum does not exist until the tarball is built, so the
+  # tagged commit cannot carry its own pins — they land on main afterwards.
+  # Left to a human this is forgotten silently: build.sh falls back to a
+  # source build and no install fails, so nothing surfaces it.
+  pin:
+    needs: release
+    runs-on: ubuntu-24.04
+    # Two releases published close together would otherwise race, and the
+    # loser's commit could be the one that lands. Queue instead of cancel:
+    # every release still gets its turn, and the version guard in
+    # pin-release.sh rejects any that turns out to be a downgrade.
+    concurrency:
+      group: pin-checksums
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: pin checksums
+        run: scripts/pin-release.sh "$GITHUB_REF_NAME"
+      - name: commit
+        run: |
+          if git diff --quiet scripts/build.sh; then
+            echo "pins already current for $GITHUB_REF_NAME"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build: pin $GITHUB_REF_NAME prebuilt checksums" scripts/build.sh
+          git push origin main
