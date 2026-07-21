@@ -8,7 +8,7 @@
 
 id = "herdr-whichkey"
 name = "herdr-whichkey"
-version = "0.2.0"
+version = "0.2.1"
 description = "blezz/which-key-style single-keystroke action menu: one trigger key, then a hint strip and one keystroke per action."
 min_herdr_version = "0.7.0"
 platforms = ["linux", "macos"]

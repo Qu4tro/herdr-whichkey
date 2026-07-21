@@ -1,6 +1,6 @@
 [package]
 name = "herdr-whichkey"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "blezz/which-key-style single-keystroke action menu for herdr"
 license = "MIT"
