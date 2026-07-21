@@ -8,7 +8,14 @@
 # Keep to syntax just 1.21 understands — that is what noble universe ships and
 # what CI installs. Newer syntax works locally and fails there.
 
-# everything the gate runs, in order (bare `just` too)
+# Bare `just` lists rather than runs: typing it to see what is here should not
+# kick off a full compile-and-test. Ask for the gate by name.
+
+# list the recipes
+default:
+    @just --list
+
+# everything the gate runs, in order
 ci: fmt lint test shellcheck
 
 # rustfmt, per rustfmt.toml
