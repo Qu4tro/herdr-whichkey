@@ -116,10 +116,8 @@ fn print_defaults() -> Result<()> {
     let have_bin = |b: &str| dispatch::binary_on_path(b);
     let have_plugin = |p: &str| plugins.as_ref().map(|set| set.contains(p)).unwrap_or(true);
 
-    let mut out = format!(
-        "# resolved menu (defaults + {})\n",
-        config::user_config_path().display()
-    );
+    let mut out =
+        format!("# resolved menu (defaults + {})\n", config::user_config_path().display());
     print_nodes(&mut out, &tree, "", &have_bin, &have_plugin);
     // One buffered write, EPIPE ignored — `defaults | head` must not panic.
     use std::io::Write as _;
@@ -142,11 +140,17 @@ fn print_nodes(
         let stick = if n.stick { "   (stick)" } else { "" };
         match &n.kind {
             NodeKind::Group(children) => {
-                let _ = writeln!(out, "{indent}{}  {} ›{hidden}", keys::display_key(n.key), n.label);
+                let _ =
+                    writeln!(out, "{indent}{}  {} ›{hidden}", keys::display_key(n.key), n.label);
                 print_nodes(out, children, &format!("{indent}  "), have_bin, have_plugin);
             }
             NodeKind::Leaf(_) => {
-                let _ = writeln!(out, "{indent}{}  {}{stick}{hidden}", keys::display_key(n.key), n.label);
+                let _ = writeln!(
+                    out,
+                    "{indent}{}  {}{stick}{hidden}",
+                    keys::display_key(n.key),
+                    n.label
+                );
             }
         }
     }
@@ -159,9 +163,7 @@ struct DoneSignal {
 
 impl DoneSignal {
     fn from_env() -> Self {
-        Self {
-            fifo: std::env::var_os("WHICHKEY_DONE_FIFO").map(Into::into),
-        }
+        Self { fifo: std::env::var_os("WHICHKEY_DONE_FIFO").map(Into::into) }
     }
 }
 
@@ -179,10 +181,8 @@ impl Drop for DoneSignal {
 fn write_done_fifo(path: &std::path::Path) {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .write(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(path)
+    if let Ok(mut f) =
+        std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(path)
     {
         let _ = f.write_all(b"done\n");
     }

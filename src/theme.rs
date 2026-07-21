@@ -91,11 +91,9 @@ fn from_herdr_config() -> Option<Palette> {
 }
 
 fn herdr_config_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
-        });
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+    });
     base.join("herdr/config.toml")
 }
 
@@ -155,19 +153,11 @@ pub fn parse_hex(s: &str) -> Result<Color> {
         bail!("'{s}' is not a #rrggbb color");
     }
     let n = u32::from_str_radix(h, 16).unwrap();
-    Ok(Color::Rgb {
-        r: (n >> 16) as u8,
-        g: (n >> 8) as u8,
-        b: n as u8,
-    })
+    Ok(Color::Rgb { r: (n >> 16) as u8, g: (n >> 8) as u8, b: n as u8 })
 }
 
 const fn rgb(n: u32) -> Color {
-    Color::Rgb {
-        r: (n >> 16) as u8,
-        g: (n >> 8) as u8,
-        b: n as u8,
-    }
+    Color::Rgb { r: (n >> 16) as u8, g: (n >> 8) as u8, b: n as u8 }
 }
 
 /// ANSI-only palette: paint nothing we don't have to, use the terminal's
@@ -343,10 +333,23 @@ mod tests {
     fn roster_complete() {
         // Every theme name shipped in herdr 0.7.4 resolves.
         for name in [
-            "catppuccin", "catppuccin-latte", "terminal", "tokyo-night",
-            "tokyo-night-day", "dracula", "nord", "gruvbox", "gruvbox-light",
-            "one-dark", "one-light", "solarized", "solarized-light",
-            "kanagawa", "kanagawa-lotus", "rose-pine", "rose-pine-dawn",
+            "catppuccin",
+            "catppuccin-latte",
+            "terminal",
+            "tokyo-night",
+            "tokyo-night-day",
+            "dracula",
+            "nord",
+            "gruvbox",
+            "gruvbox-light",
+            "one-dark",
+            "one-light",
+            "solarized",
+            "solarized-light",
+            "kanagawa",
+            "kanagawa-lotus",
+            "rose-pine",
+            "rose-pine-dawn",
             "vesper",
         ] {
             assert!(builtin(name).is_some(), "missing palette for {name}");

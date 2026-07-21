@@ -55,7 +55,12 @@ impl Drop for TermGuard {
     }
 }
 
-pub fn run(tree: &[Node], pal: &Palette, lay: &LayoutConfig, ctx: &HerdrContext) -> Result<Outcome> {
+pub fn run(
+    tree: &[Node],
+    pal: &Palette,
+    lay: &LayoutConfig,
+    ctx: &HerdrContext,
+) -> Result<Outcome> {
     let _guard = TermGuard::enter()?;
     let mut stack: Vec<(&[Node], String)> = vec![(tree, "whichkey".into())];
     let mut notice = Notice::None;
@@ -190,10 +195,8 @@ fn render(
     // count (unless `columns` pins it), taffy positions the grid with
     // the `[layout]` distribution knobs — space-evenly both ways by
     // default.
-    let texts: Vec<(String, String, bool)> = level
-        .iter()
-        .map(|n| (display_key(n.key), n.label.clone(), n.is_group()))
-        .collect();
+    let texts: Vec<(String, String, bool)> =
+        level.iter().map(|n| (display_key(n.key), n.label.clone(), n.is_group())).collect();
     let item_width = texts
         .iter()
         .map(|(k, l, g)| k.chars().count() + 2 + l.chars().count() + if *g { 2 } else { 0 })

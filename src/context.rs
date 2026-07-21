@@ -28,8 +28,9 @@ pub struct HerdrContext {
 
 impl HerdrContext {
     pub fn from_env() -> Result<Self> {
-        let raw = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
-            .context("HERDR_PLUGIN_CONTEXT_JSON not set — run via the herdr plugin, not directly")?;
+        let raw = std::env::var("HERDR_PLUGIN_CONTEXT_JSON").context(
+            "HERDR_PLUGIN_CONTEXT_JSON not set — run via the herdr plugin, not directly",
+        )?;
         serde_json::from_str(&raw).context("could not parse HERDR_PLUGIN_CONTEXT_JSON")
     }
 

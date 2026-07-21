@@ -38,9 +38,9 @@ pub fn user_config_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR") {
         return PathBuf::from(dir).join("whichkey.toml");
     }
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"));
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+    });
     base.join("herdr/plugins/config/herdr-whichkey/whichkey.toml")
 }
 
@@ -51,8 +51,9 @@ pub fn load(seed_if_missing: bool) -> Result<Config> {
 
     let path = user_config_path();
     let user: FileConfig = match std::fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text)
-            .with_context(|| format!("could not parse {}", path.display()))?,
+        Ok(text) => {
+            toml::from_str(&text).with_context(|| format!("could not parse {}", path.display()))?
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if seed_if_missing {
                 seed(&path).ok(); // best-effort; a read-only dir shouldn't break the menu
@@ -274,11 +275,8 @@ mod tests {
     #[test]
     fn defaults_parse_and_build() {
         let f: FileConfig = toml::from_str(DEFAULTS_TOML).unwrap();
-        let entries: Vec<(String, ItemSpec)> = f
-            .menu
-            .into_iter()
-            .map(|(k, v)| (k, v.try_into::<ItemSpec>().unwrap()))
-            .collect();
+        let entries: Vec<(String, ItemSpec)> =
+            f.menu.into_iter().map(|(k, v)| (k, v.try_into::<ItemSpec>().unwrap())).collect();
         let tree = build_tree(&entries).unwrap();
         assert!(tree.iter().any(|n| n.key == 'g'));
         let resize = tree.iter().find(|n| n.key == 'r').unwrap();

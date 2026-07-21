@@ -83,9 +83,8 @@ pub fn positions(
     };
 
     let mut tree: TaffyTree<()> = TaffyTree::new();
-    let children = (0..n)
-        .map(|_| tree.new_leaf(Style::default()))
-        .collect::<Result<Vec<_>, _>>()?;
+    let children =
+        (0..n).map(|_| tree.new_leaf(Style::default())).collect::<Result<Vec<_>, _>>()?;
     let gap = if justify.wants_gutter_gap() { gutter } else { 0 };
     let root = tree.new_with_children(
         Style {
@@ -116,7 +115,13 @@ pub fn positions(
 /// in a wide strip become 4×2, not 2×4 — then items divided evenly so
 /// no column trails nearly empty. `max_rows` still wins when the strip
 /// is too narrow for the height-minimal column count.
-fn balance(n: usize, max_rows: usize, item_width: usize, width: usize, gutter: usize) -> (usize, usize) {
+fn balance(
+    n: usize,
+    max_rows: usize,
+    item_width: usize,
+    width: usize,
+    gutter: usize,
+) -> (usize, usize) {
     if n == 0 {
         return (1, 0);
     }
@@ -136,7 +141,7 @@ mod tests {
         assert_eq!(balance(8, 6, 18, 179, 9), (4, 2)); // not 2 columns of 4
         assert_eq!(balance(5, 6, 15, 179, 7), (5, 1)); // small level: one line
         assert_eq!(balance(9, 6, 18, 179, 9), (5, 2)); // not 6 cols with one empty
-        // Narrow strip: falls back toward tall columns.
+                                                       // Narrow strip: falls back toward tall columns.
         assert_eq!(balance(8, 6, 18, 78, 9), (2, 4));
         assert_eq!(balance(8, 6, 18, 20, 9), (2, 4)); // too narrow: height-minimal
         assert_eq!(balance(0, 6, 10, 80, 5), (1, 0)); // empty level draws nothing

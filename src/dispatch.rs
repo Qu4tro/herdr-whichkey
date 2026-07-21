@@ -14,9 +14,7 @@ use crate::model::{Leaf, RunIn};
 /// The herdr binary the host told us to use. Falling back to PATH keeps
 /// `herdr-whichkey defaults` useful from a plain shell.
 pub fn herdr_bin() -> PathBuf {
-    std::env::var_os("HERDR_BIN_PATH")
-        .map(Into::into)
-        .unwrap_or_else(|| PathBuf::from("herdr"))
+    std::env::var_os("HERDR_BIN_PATH").map(Into::into).unwrap_or_else(|| PathBuf::from("herdr"))
 }
 
 /// Execute one leaf. Called inline for `stick` items (errors go to the
@@ -143,10 +141,7 @@ fn run_in_tab(cmd: &str, cwd: Option<&str>, ctx: &HerdrContext) -> Result<()> {
 /// Run a herdr command, error with its stderr on failure, parse the
 /// one-line JSON `{"id": …, "result": …}` it prints on success.
 fn check(cmd: &mut Command, what: &str) -> Result<serde_json::Value> {
-    let out = cmd
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("could not run {what}"))?;
+    let out = cmd.stdin(Stdio::null()).output().with_context(|| format!("could not run {what}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let err = err.trim();
@@ -220,17 +215,14 @@ pub fn fit_split_height(target: u16) {
     let Some(own) = std::env::var("HERDR_PANE_ID").ok().filter(|s| !s.is_empty()) else {
         return;
     };
-    let Ok(layout) = check(
-        Command::new(herdr_bin()).args(["pane", "layout", "--pane", &own]),
-        "pane layout",
-    ) else {
+    let Ok(layout) =
+        check(Command::new(herdr_bin()).args(["pane", "layout", "--pane", &own]), "pane layout")
+    else {
         return;
     };
     let layout = &layout["result"]["layout"];
     let Some(own_rect) = layout["panes"].as_array().and_then(|ps| {
-        ps.iter()
-            .find(|p| p["pane_id"].as_str() == Some(own.as_str()))
-            .map(|p| p["rect"].clone())
+        ps.iter().find(|p| p["pane_id"].as_str() == Some(own.as_str())).map(|p| p["rect"].clone())
     }) else {
         return;
     };
