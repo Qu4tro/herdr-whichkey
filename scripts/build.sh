@@ -77,4 +77,6 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 echo "herdr-whichkey: building from source (no prebuilt for this platform/version)"
-cargo build --release
+# --locked so an install builds the dependency versions the release tested,
+# not whatever resolves today.
+cargo build --release --locked

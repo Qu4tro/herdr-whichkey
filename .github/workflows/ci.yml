@@ -3,6 +3,8 @@
 # checks the things that are host-independent and fails fast.
 #
 # Lints are denied, not warned — a warning nobody sees is not a gate.
+# --locked everywhere: a green run must describe the dependency versions
+# in Cargo.lock, not whatever resolved that morning.
 name: ci
 
 on:
@@ -30,6 +32,10 @@ jobs:
       - name: fmt
         run: cargo fmt --check
       - name: clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: test
-        run: cargo test
+        run: cargo test --locked
+      # build.sh is what herdr runs on plugin install/update, so a bug here
+      # breaks installs rather than the menu. Preinstalled on the runner.
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
