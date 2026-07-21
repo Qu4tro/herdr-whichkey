@@ -3,6 +3,7 @@
 //! adaptive auto-hide.
 
 use std::collections::HashSet;
+use std::os::unix::process::CommandExt as _;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -74,6 +75,11 @@ fn invoke_action(id: &str) -> Result<()> {
 /// Detached `sh -c`, with a wrapper that surfaces failure as a herdr
 /// notification — a background command that dies silently is a footgun.
 /// The command rides in an env var so no quoting of user text is needed.
+///
+/// The `setsid` is what makes "background" true for a non-stick leaf:
+/// we spawn and return, the menu binary exits, and herdr tears our pane
+/// down — which reaches everything left in our session, i.e. the shell
+/// we just started, usually before it has run a thing.
 fn run_background(cmd: &str, cwd: Option<&str>) -> Result<()> {
     let script = r#"( eval "$WK_CMD" ) >/dev/null 2>&1 || \
         "$WK_HERDR" notification show 'whichkey: command failed' --body "$WK_CMD" >/dev/null 2>&1"#;
@@ -86,6 +92,17 @@ fn run_background(cmd: &str, cwd: Option<&str>) -> Result<()> {
         .stderr(Stdio::null());
     if let Some(dir) = cwd {
         c.current_dir(dir);
+    }
+    // SAFETY: between fork and exec only async-signal-safe calls are
+    // allowed; `setsid` is one. Its error is ignored on purpose — a
+    // freshly forked child is never already a process-group leader, so
+    // it cannot fail here, and if it somehow did, running the command
+    // attached beats not running it at all.
+    unsafe {
+        c.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
     }
     c.spawn().with_context(|| format!("could not start: {cmd}"))?;
     Ok(())
@@ -394,5 +411,40 @@ mod tests {
     fn path_probe() {
         assert!(binary_on_path("sh"));
         assert!(!binary_on_path("definitely-not-a-real-binary-xyzzy"));
+    }
+
+    /// The non-stick `run` leaf: the command must actually run, and must
+    /// outlive us. `$$` is the shell we spawned (subshells keep it), so
+    /// the file both proves the command ran and hands us the pid to check
+    /// the session of.
+    #[test]
+    fn background_command_runs_and_leaves_our_session() {
+        let path = std::env::temp_dir().join(format!("wk-detach-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        run_background(&format!("echo $$ > '{}'; sleep 30", path.display()), None).unwrap();
+
+        // Spawn to first write is milliseconds; the ceiling is for a
+        // loaded CI box, not for the common case.
+        let mut pid = None;
+        for _ in 0..500 {
+            if let Ok(s) = std::fs::read_to_string(&path) {
+                if let Ok(p) = s.trim().parse::<i32>() {
+                    pid = Some(p);
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_file(&path);
+        let pid = pid.expect("background command never ran");
+
+        // SAFETY: getsid is a plain read of process state; a pid we do
+        // not own just yields -1/ESRCH.
+        let (theirs, ours) = unsafe { (libc::getsid(pid), libc::getsid(0)) };
+        // New session leader ⇒ new process group too, so killing its
+        // group takes the sleep with it.
+        unsafe { libc::kill(-pid, libc::SIGKILL) };
+        assert!(theirs > 0, "background command exited before we could check it");
+        assert_ne!(theirs, ours, "still in our session — herdr's pane teardown would kill it");
     }
 }
