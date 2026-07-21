@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO="Qu4tro/herdr-whichkey"
-VERSION="v0.2.1"
+VERSION="v0.2.2"
 DEST_DIR="target/release"
 
 # Pinned sha256 of each release tarball, from the release's SHA256SUMS
