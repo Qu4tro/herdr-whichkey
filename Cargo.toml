@@ -1,6 +1,6 @@
 [package]
 name = "herdr-whichkey"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 # A snapshot of what the current lock needs, not a promise: indexmap/hashbrown
 # (via toml's preserve_order) are the floor at 1.85; nothing else needs past
