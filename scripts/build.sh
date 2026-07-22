@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO="Qu4tro/herdr-whichkey"
-VERSION="v0.2.2"
+VERSION="v0.3.0"
 DEST_DIR="target/release"
 
 # Pinned sha256 of each release tarball, from the release's SHA256SUMS
@@ -16,10 +16,10 @@ DEST_DIR="target/release"
 # takes over.
 sha_for() {
   case "$1" in
-    x86_64-unknown-linux-gnu)  echo "d1fc2684af268e901efa80201ff9fc327892cba3806b2caa913a78eb72d54e5f" ;;
-    aarch64-unknown-linux-gnu) echo "7db5edc455c695890237626bfd6c5f09507fa6f1d85f90d54041fadf91814bfb" ;;
-    aarch64-apple-darwin)      echo "0249407d00875a3bc78fa81a28557e033c38a75adda96f9d49546123e8e343ee" ;;
-    x86_64-apple-darwin)       echo "3cbb3ed7a855d485bf2b8e95c64cd31bf189b02f763ed43d5625c7c5bd8f3ebf" ;;
+    x86_64-unknown-linux-gnu)  echo "0b8a13a2e2ec562ed48abad841a01ae8cea5555ba220dcb5307dbb04196fbd74" ;;
+    aarch64-unknown-linux-gnu) echo "0a58794dd9bd9f21657a7b4b35a6f99c3d5bd8117a100ca8a16f481c6f5cd44f" ;;
+    aarch64-apple-darwin)      echo "d1b4b29d58042fd2537d2fcd6fd68d28a3732dbd9f351423282faf7f8d48e61f" ;;
+    x86_64-apple-darwin)       echo "7a79ec52d7017b427a987f6939fea65c2c09dbeafd99cc2245618fbf8eace76d" ;;
     *)                         echo "" ;;
   esac
 }
