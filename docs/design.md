@@ -33,7 +33,7 @@ a user's to make, not ours:
 
 | placement | surface | reflows the focused pane | size knob |
 |---|---|---|---|
-| `bottom` (default) | split below | yes | `height`, rows (min 3) |
+| `bottom` (default) | split below | yes | `height`, rows (min 4) |
 | `right` | split beside | yes | `width`, columns (min 8) |
 | `popup` | centered float | **no** | `width` × `height`, outer cells (min 20 × 6) |
 

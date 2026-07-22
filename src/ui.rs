@@ -370,11 +370,13 @@ fn grid(
 
 /// One cell's variable parts, cut to the room it actually has: the label
 /// gives up cells to the group marker rather than pushing it past the
-/// pane, since a cell may now be as wide as the pane itself. Rendering
-/// draws these; the tests measure them.
+/// pane, since a cell may now be as wide as the pane itself — and the
+/// marker goes too when even the label's whole budget can't hold it.
+/// Rendering draws these; the tests measure them.
 fn cell_parts(key: &str, label: &str, group: bool, avail: usize) -> (String, &'static str) {
-    let marker = if group { " ›" } else { "" };
-    (clip(label, avail.saturating_sub(width(key) + 2 + width(marker))), marker)
+    let room = avail.saturating_sub(width(key) + 2);
+    let marker = if group && room >= 2 { " ›" } else { "" };
+    (clip(label, room.saturating_sub(width(marker))), marker)
 }
 
 /// Off-screen cells are drawn by nobody, so they are clickable by nobody.
@@ -535,6 +537,9 @@ fn render(
 fn clip(s: &str, max: usize) -> String {
     if width(s) <= max {
         return s.to_string();
+    }
+    if max == 0 {
+        return String::new(); // no room even for the ellipsis
     }
     let budget = max.saturating_sub(1); // the '…' takes a cell of its own
     let mut t = String::new();
@@ -862,5 +867,35 @@ mod tests {
         assert_eq!(clip(&family, 9), family); // 2 + 1 + 6 cells, nothing to cut
         assert_eq!(clip(&family, 3), format!("{FAMILY}…"));
         assert_eq!(clip(&family, 2), "…");
+        // No room at all draws nothing — an ellipsis is a cell too.
+        assert_eq!(clip(&family, 0), "");
+    }
+
+    /// Whatever the key measures, the parts drawn after it stay inside the
+    /// room the cell was given — at the right split's documented minimum
+    /// that room is six cells, and round 4 caught the ellipsis and group
+    /// marker running past it.
+    #[test]
+    fn a_cell_never_draws_past_the_room_it_is_given() {
+        for avail in 0..=8 {
+            for key in ["g", "f12"] {
+                for group in [false, true] {
+                    let (label, marker) = cell_parts(key, "fifteen-chars-x", group, avail);
+                    assert!(
+                        width(key) + 2 + width(&label) + width(marker) <= avail.max(width(key) + 2),
+                        "key {key} group {group} avail {avail}: drew {label:?}{marker:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The launcher clamps a bottom strip to height 4: herdr's chrome
+    /// takes ~2 of those rows, so two reach the renderer — the footer
+    /// spends one and an item row survives. The old minimum of 3 left
+    /// zero, and the supported minimum rendered a blank strip.
+    #[test]
+    fn the_clamped_bottom_minimum_keeps_an_item_row() {
+        assert_eq!(item_area(&LayoutConfig::default(), 2), (0, 1));
     }
 }

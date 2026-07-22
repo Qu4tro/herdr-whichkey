@@ -180,8 +180,10 @@ fn parse_chord(token: &str) -> Option<Chord> {
             "ctrl" | "control" => ctrl = true,
             "alt" | "opt" | "option" | "meta" => alt = true,
             "shift" => shift = true,
-            // Nothing a keystroke read inside a pane can observe.
-            "cmd" | "super" | "win" => {}
+            // Nothing a keystroke read inside a pane can observe, so a
+            // chord requiring one can never be verified — no trigger at
+            // all beats one that fires without the modifier held.
+            "cmd" | "super" | "win" => return None,
             _ => code = Some(key_code(part)?),
         }
     }
@@ -194,6 +196,11 @@ fn parse_chord(token: &str) -> Option<Chord> {
             (KeyCode::Char(if shift { c.to_ascii_uppercase() } else { c }), None)
         }
         KeyCode::Char(c) if ctrl => (KeyCode::Char(c), None),
+        // shift+tab is a key of its own on the wire — terminals send
+        // BackTab (ESC [ Z) and disagree about setting the modifier
+        // beside it, so the code answers shift the way case does for a
+        // letter.
+        KeyCode::Tab if shift => (KeyCode::BackTab, None),
         code => (code, Some(shift)),
     };
     Some(Chord { code: normalize(code, ctrl), ctrl, alt, shift })
@@ -382,6 +389,36 @@ mod tests {
         let mut t = Trigger::parse("shift+enter", "ctrl+b").unwrap();
         assert_eq!(t.feed(&press(KeyCode::Enter, KeyModifiers::NONE)), Step::No);
         assert_eq!(t.feed(&shifted(KeyCode::Enter)), Step::Complete);
+    }
+
+    /// shift+tab never arrives as Tab-with-a-modifier: terminals send
+    /// BackTab (ESC [ Z) and disagree about setting shift beside it, so
+    /// the code alone answers shift — the way case does for a letter.
+    #[test]
+    fn shift_tab_matches_the_backtab_it_arrives_as() {
+        let mut t = Trigger::parse("prefix+shift+tab", "ctrl+b").unwrap();
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&press(KeyCode::Tab, KeyModifiers::NONE)), Step::No);
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&press(KeyCode::BackTab, KeyModifiers::SHIFT)), Step::Complete);
+        // A terminal that sends BackTab without the modifier still matches.
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&press(KeyCode::BackTab, KeyModifiers::NONE)), Step::Complete);
+
+        // And a plain tab binding is not closed by shift+tab.
+        let mut t = Trigger::parse("prefix+tab", "ctrl+b").unwrap();
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&press(KeyCode::BackTab, KeyModifiers::SHIFT)), Step::No);
+    }
+
+    /// cmd/super never reaches a keystroke read inside a pane, so a
+    /// binding requiring one parses to no trigger at all — a trigger
+    /// that dropped the modifier would close the menu on the bare key.
+    #[test]
+    fn a_super_chord_yields_no_trigger_rather_than_a_loose_one() {
+        assert!(Trigger::parse("super+x", "ctrl+b").is_none());
+        assert!(Trigger::parse("prefix+cmd+space", "ctrl+b").is_none());
+        assert!(Trigger::parse("prefix+space", "super+b").is_none());
     }
 
     #[test]

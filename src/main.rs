@@ -102,7 +102,9 @@ fn run_menu() -> Result<()> {
     match surface {
         layout::Placement::Bottom => {
             let h = lay.height.unwrap_or(surface.height());
-            dispatch::fit_split(dispatch::SplitAxis::Down, h.max(3));
+            // herdr's pane chrome eats ~2 of these rows and the footer one
+            // more: below 4 no row is left to draw an item in.
+            dispatch::fit_split(dispatch::SplitAxis::Down, h.max(4));
         }
         layout::Placement::Right => {
             let w = lay.width.unwrap_or(surface.width());

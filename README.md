@@ -151,7 +151,9 @@ plugin panes, whatever its own `ui.mouse_capture` is set to
 - **Click a group** to descend into it. **Click empty strip space** to go back
   up one level — Backspace, not close, so a stray click is never destructive.
 - The item under the pointer highlights, so you can see what you'd hit.
-- The scroll wheel does nothing; the menu always fits on screen.
+- The scroll wheel does nothing — there is no scrolling. The grid re-lays
+  itself to the space it has; at the documented minimum sizes labels clip
+  to fit instead.
 
 Two herdr quirks worth knowing, neither of them ours to fix:
 
@@ -203,7 +205,7 @@ useful to do with a menu smaller than its own chrome:
 
 | | minimum | ceiling |
 |---|---|---|
-| `bottom` | `height` 3 | 90% of the pane it splits |
+| `bottom` | `height` 4 | 90% of the pane it splits |
 | `right` | `width` 8 | 90% of the pane it splits |
 | `popup` | `width` 20, `height` 6 | the screen |
 
