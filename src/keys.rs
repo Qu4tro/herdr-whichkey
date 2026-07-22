@@ -37,7 +37,7 @@ pub fn parse_key(token: &str) -> Result<char> {
         let c = parse_key(rest)?;
         return Ok(c.to_ascii_uppercase());
     }
-    if let Some(&(_, c)) = NAMED.iter().find(|(n, _)| *n == lower) {
+    if let Some(c) = named_char(&lower) {
         return Ok(c);
     }
     let mut chars = t.chars();
@@ -52,6 +52,12 @@ pub fn parse_key(token: &str) -> Result<char> {
 /// Parse a full path key like "g s" into its key sequence.
 pub fn parse_path(path: &str) -> Result<Vec<char>> {
     path.split_whitespace().map(parse_key).collect()
+}
+
+/// The character behind one of herdr's punctuation names, for callers
+/// spelling out keys that aren't menu steps (the trigger binding).
+pub fn named_char(name: &str) -> Option<char> {
+    NAMED.iter().find(|(n, _)| *n == name).map(|&(_, c)| c)
 }
 
 /// Render a key for display in the strip (space shown by name).

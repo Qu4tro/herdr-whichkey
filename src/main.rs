@@ -12,6 +12,7 @@ mod keys;
 mod layout;
 mod model;
 mod theme;
+mod trigger;
 mod ui;
 
 use anyhow::Result;
@@ -125,7 +126,12 @@ fn run_menu() -> Result<()> {
         return ui::show_error(&pal, "menu is empty — every item was hidden or unavailable");
     }
 
-    match ui::run(&tree, &pal, &lay, &uic, &ctx)? {
+    // The binding that opened us, so pressing it again closes us on the
+    // surface herdr won't do that for (see trigger.rs). None when herdr's
+    // config has no binding of ours to read.
+    let trigger = trigger::Trigger::from_herdr_config();
+
+    match ui::run(&tree, &pal, &lay, &uic, &ctx, trigger)? {
         ui::Outcome::Closed => {}
         // Deferred leaves run after the terminal is restored; the popup
         // stays visible for the few ms this takes, which beats dispatching

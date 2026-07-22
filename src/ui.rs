@@ -23,6 +23,7 @@ use crate::keys::display_key;
 use crate::layout::{self, LayoutConfig};
 use crate::model::{Node, NodeKind};
 use crate::theme::Palette;
+use crate::trigger::{self, Trigger};
 
 /// `[ui]` section of whichkey.toml.
 #[derive(Debug, Clone, Deserialize)]
@@ -99,6 +100,7 @@ pub fn run(
     lay: &LayoutConfig,
     uic: &UiConfig,
     ctx: &HerdrContext,
+    mut trigger: Option<Trigger>,
 ) -> Result<Outcome> {
     let _guard = TermGuard::enter(uic.mouse)?;
     let mut stack: Vec<(&[Node], String)> = vec![(tree, "whichkey".into())];
@@ -137,10 +139,42 @@ pub fn run(
 
         match event::read()? {
             Event::Resize(_, _) => dirty = true,
-            Event::Key(KeyEvent { code, modifiers, kind, .. })
-                if kind == KeyEventKind::Press || kind == KeyEventKind::Repeat =>
-            {
+            Event::Key(ev) if ev.kind == KeyEventKind::Press || ev.kind == KeyEventKind::Repeat => {
                 dirty = true;
+                // The keys that opened us arrive here, not at herdr, when
+                // a popup has focus — so press-again-to-close is ours to
+                // implement on that surface (docs/spike-popup-panes.md).
+                // On a split herdr keeps them and fires the binding
+                // again; the launcher's lock closes us instead, and this
+                // never matches.
+                // The menu's own navigation outranks the trigger, always:
+                // herdr accepts `esc` as a prefix, and a menu you cannot
+                // Esc out of would be a far worse bargain than one that
+                // doesn't close on its own key.
+                let navigation = matches!(ev.code, KeyCode::Esc | KeyCode::Backspace)
+                    || (ev.code == KeyCode::Char('c')
+                        && ev.modifiers.contains(KeyModifiers::CONTROL));
+                let step = match trigger.as_mut() {
+                    Some(t) if navigation => {
+                        t.reset();
+                        trigger::Step::No
+                    }
+                    Some(t) => t.feed(&ev),
+                    None => trigger::Step::No,
+                };
+                match step {
+                    trigger::Step::Complete => return Ok(Outcome::Closed),
+                    // Mid-sequence: the key belongs to the trigger, so no
+                    // menu item may see it. Say so — a keystroke that
+                    // vanishes silently reads as a wedged menu.
+                    trigger::Step::Pending => {
+                        let label = trigger.as_ref().map(Trigger::label).unwrap_or_default();
+                        notice = Notice::Info(format!("{label} …"));
+                        continue;
+                    }
+                    trigger::Step::No => {}
+                }
+                let KeyEvent { code, modifiers, .. } = ev;
                 match code {
                     // Esc walks back up and only closes from the root —
                     // ctrl+c (and the launcher's toggle) always closes.

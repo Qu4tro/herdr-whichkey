@@ -35,10 +35,9 @@ herdr server reload-config
 The strip docks as a 7-row split under the pane you're in and puts the
 layout back when it closes — or opens beside it, or floats over it, as
 [`[layout] placement`](#layout) says. Esc goes back up a level (and closes
-from the root), Backspace also goes back, Ctrl+C always closes — and
-pressing the trigger again closes the menu (except on `popup`, see
-[below](#layout)). Unknown keys just hint; nothing flashes. Items are
-[clickable](#mouse) too.
+from the root), Backspace also goes back, Ctrl+C always closes, and
+pressing the trigger again closes the menu. Unknown keys just hint;
+nothing flashes. Items are [clickable](#mouse) too.
 
 ## Defaults
 
@@ -191,24 +190,40 @@ pair of knobs instead of three sets:
 
 ```toml
 [layout]
-height = 7     # bottom: strip rows to shrink to (~2 go to pane chrome)
-width  = 32    # right:  columns to shrink to (~2 go to pane chrome)
+height = 7     # bottom: strip rows to size to (~2 go to pane chrome)
+width  = 32    # right:  columns to size to (~2 go to pane chrome)
                # popup:  both, as the float's outer size (~2 each to its border)
 ```
 
 The knob the placement doesn't use is ignored, not an error — switching
 placement doesn't mean rewriting the section.
 
+Two limits are clamped rather than reported, because there is nothing
+useful to do with a menu smaller than its own chrome:
+
+| | minimum | ceiling |
+|---|---|---|
+| `bottom` | `height` 3 | 90% of the pane it splits |
+| `right` | `width` 8 | 90% of the pane it splits |
+| `popup` | `width` 20, `height` 6 | the screen |
+
+The ceiling on the splits is herdr's: it clamps a split ratio to
+[0.1, 0.9], so on a short tab a large `height` lands at 90% instead of
+where you asked. Sizes below or above the placement's own default work in
+both directions — a split opens at half the pane and is resized to fit
+either way.
+
 `top` and `left` aren't offered: herdr only splits `down` and `right`, and
 faking the others means splitting and then moving, which reflows your pane
 twice — the one thing the strip exists to avoid.
 
-**Popup caveats**, both herdr's rather than ours (see
-[docs/spike-popup-panes.md](docs/spike-popup-panes.md)):
+**Popup notes** (see [docs/spike-popup-panes.md](docs/spike-popup-panes.md)):
 
-- **Pressing the trigger again does not close a popup.** herdr routes all
-  input to a focused popup, so the binding never reaches herdr to fire.
-  Esc and Ctrl+C close it, as always. Splits toggle as documented above.
+- Pressing the trigger again closes a popup, but by a different route
+  than it closes a split: herdr routes every key into a focused popup, so
+  the binding never fires — the menu recognizes the keystrokes itself,
+  reading the binding out of your herdr `config.toml`. Rebind it there
+  and the close follows. Esc and Ctrl+C close it either way.
 - A popup's border title is fixed, so the breadcrumb is drawn on the
   popup's first body row instead — clicking it goes back up a level.
 

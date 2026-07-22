@@ -106,6 +106,13 @@ Probed the way the flags were probed the first time, with an unknown
 - `--direction` still takes **only** `down` and `right`; `up` and `left`
   are rejected with `invalid split direction: up`. **top and left remain
   inexpressible**, which is why the placement enum is bottom|right|popup.
+  `pane resize --direction`, unlike the open flag, takes **all four** —
+  and the direction alone signs the ratio change, whichever pane is
+  named: `down`/`right` add the amount, `up`/`left` subtract it (measured
+  on both axes). That is what lets a split be sized *up* from the half it
+  opens at and not only down. The **ratio clamps to [0.1, 0.9]**: a
+  single call honours any amount, but 0.5 → `up 0.45` lands at 0.10 and
+  every further press stays there.
 - `--placement` on the CLI **overrides the manifest's** `[[panes]]
   placement`, so one `menu` entrypoint serves all three surfaces.
 - The CLI exit code is trustworthy: 0 on open, 1 on `popup already open`
@@ -137,8 +144,17 @@ the slave as its controlling terminal):
   whichkey binding again logs no action invocation at all (herdr's plugin
   log stays flat across three presses) and the keystrokes arrive in the
   popup as ordinary input. The same press *does* toggle a bottom split,
-  which herdr keeps routing prefix keys for. So on the popup surface Esc
-  and ctrl+c close the menu, and press-again-to-close is not available.
+  which herdr keeps routing prefix keys for.
+  **Byte-level follow-up (hw-16fc fix round):** the keys really do arrive
+  intact and in order. A probe pane reading raw stdin logged `b'\x02'`
+  then `b' '` for `prefix+space` — two separate reads, nothing eaten,
+  nothing rewritten. So the toggle is implementable *inside* the menu:
+  it reads the binding out of herdr's `config.toml` (`[keys] prefix` plus
+  the `[[keys.command]]` entry invoking `herdr-whichkey.open`) and closes
+  when that sequence arrives (`src/trigger.rs`). herdr's refusal to route
+  the binding is what makes this necessary, not a bug we work around
+  twice: on a split the same keys never reach us and the launcher's lock
+  does the job.
 - Toggle-to-close still works at the launcher level, and has to be built
   differently: with no pane id there is nothing to `pane send-keys`, so
   the binary writes its pid into the launcher's lock and the second

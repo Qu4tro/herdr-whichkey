@@ -90,7 +90,9 @@ fn from_herdr_config() -> Option<Palette> {
     builtin(&name)
 }
 
-fn herdr_config_path() -> PathBuf {
+/// herdr's own config.toml — the theme comes out of it, and so does the
+/// key binding that opens us (`trigger.rs`).
+pub fn herdr_config_path() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
     });

@@ -235,10 +235,24 @@ pub enum SplitAxis {
 }
 
 impl SplitAxis {
+    /// The direction that moves the divider away from us, growing the
+    /// pane we were split off and shrinking ours.
     fn direction(self) -> &'static str {
         match self {
             SplitAxis::Down => "down",
             SplitAxis::Right => "right",
+        }
+    }
+
+    /// And the one that moves it back, growing us past the half herdr
+    /// opened us at. `pane resize` takes all four directions even though
+    /// `plugin pane open --direction` takes two, and the direction alone
+    /// decides the sign of the ratio change (measured: `--direction up`
+    /// subtracts the amount, `down` adds it, whichever pane is named).
+    fn opposite(self) -> &'static str {
+        match self {
+            SplitAxis::Down => "up",
+            SplitAxis::Right => "left",
         }
     }
 
@@ -251,12 +265,12 @@ impl SplitAxis {
     }
 }
 
-/// Shrink our split pane to `target` cells along `axis` before the first
+/// Fit our split pane to `target` cells along `axis` before the first
 /// frame. Plugin splits always open at ratio 0.5 and take no ratio flag,
-/// and `pane resize` on the far-side pane can only grow it — so the
-/// shrink is a grow of the original pane (our split sibling) along the
-/// same axis, by an exact ratio delta. Best-effort: on any failure the
-/// menu just stays at the 50% herdr gave it.
+/// so the size is a `pane resize` on the split we live in, by an exact
+/// ratio delta — in either direction, since a configured size can be
+/// bigger than the half we were handed as well as smaller.
+/// Best-effort: on any failure the menu just stays at that half.
 pub fn fit_split(axis: SplitAxis, target: u16) {
     let Some(own) = std::env::var("HERDR_PANE_ID").ok().filter(|s| !s.is_empty()) else {
         return;
@@ -298,6 +312,10 @@ pub fn fit_split(axis: SplitAxis, target: u16) {
     if orig == own {
         return;
     }
+    // The amount is unsigned; which way the divider moves is the
+    // direction's job. Ours is the second pane, so shrinking it grows the
+    // first one (`direction`) and growing it takes room back (`opposite`).
+    let direction = if amount > 0.0 { axis.direction() } else { axis.opposite() };
     let _ = check(
         Command::new(herdr_bin()).args([
             "pane",
@@ -305,26 +323,28 @@ pub fn fit_split(axis: SplitAxis, target: u16) {
             "--pane",
             &orig,
             "--direction",
-            axis.direction(),
+            direction,
             "--amount",
-            &format!("{amount:.4}"),
+            &format!("{:.4}", amount.abs()),
         ]),
         "pane resize",
     );
 }
 
-/// Ratio delta taking the split from `ratio_now` to the ratio that lays
-/// our (second) pane out at `target` cells along the split's axis; None
-/// when there is nothing (safe) to do. Single-call amounts cap out around
-/// 0.5, which a 0.5-ratio split never needs; the server also clamps
-/// ratios to 0.9, so on a very tall tab (or a very wide one) the menu
-/// bottoms out at 10% instead of the target.
+/// Signed ratio delta taking the split from `ratio_now` to the ratio that
+/// lays our (second) pane out at `target` cells along the split's axis:
+/// positive shrinks us, negative grows us past the opening half. None
+/// when the move is worth less than a cell — no point in a round trip
+/// nobody could see. herdr honours any single amount but clamps the
+/// resulting ratio to [0.1, 0.9] (measured), so a menu asked to take more
+/// than 90% of its split lands at 90% instead of the target.
 fn fit_amount(ratio_now: f64, split_extent: u64, target: u64) -> Option<f64> {
-    if split_extent <= target {
+    if split_extent == 0 {
         return None;
     }
-    let delta = (split_extent - target) as f64 / split_extent as f64 - ratio_now;
-    (delta > 0.0).then_some(delta)
+    let want = split_extent.saturating_sub(target) as f64 / split_extent as f64;
+    let delta = want - ratio_now;
+    (delta.abs() * split_extent as f64 >= 1.0).then_some(delta)
 }
 
 /// Both rects are `{x, y, width, height}`; true when `inner` fits inside.
@@ -419,13 +439,24 @@ mod tests {
 
     #[test]
     fn fit_amount_targets_exact_rows() {
-        // 23-row split at ratio 0.5, want 8 menu rows: top must reach
-        // 15/23, so grow it by the difference.
+        // 23-row split at ratio 0.5, want 8 menu rows: the divider has to
+        // reach 15/23, so the first pane grows by the difference.
         assert!((fit_amount(0.5, 23, 8).unwrap() - (15.0 / 23.0 - 0.5)).abs() < 1e-9);
-        // Already at/above the needed ratio, or a split too small: no-op.
-        assert_eq!(fit_amount(0.9, 23, 8), None);
-        assert_eq!(fit_amount(0.5, 8, 8), None);
-        assert_eq!(fit_amount(0.5, 6, 8), None);
+        // A menu bigger than the half it opened at is the same sum with
+        // the sign the other way round — the case that used to be dropped
+        // on the floor, leaving the configured size silently ignored.
+        // (23-row split, 15-row menu: the divider goes back to 8/23.)
+        let grow = fit_amount(0.5, 23, 15).unwrap();
+        assert!(grow < 0.0, "a menu past half the split has to move the divider back");
+        assert!((grow - (8.0 / 23.0 - 0.5)).abs() < 1e-9);
+        // Same from the wrong side: at 0.9 the menu is 2 rows and wants 8.
+        assert!(fit_amount(0.9, 23, 8).unwrap() < 0.0);
+        // Already the right size (to the cell): nothing worth asking for.
+        assert_eq!(fit_amount(15.0 / 23.0, 23, 8), None);
+        assert_eq!(fit_amount(0.5, 0, 8), None);
+        // A menu asked to fill its whole split asks for all of it; herdr
+        // clamps that to 90% at the far end, which is its call to make.
+        assert!(fit_amount(0.5, 8, 8).unwrap() < 0.0);
     }
 
     #[test]

@@ -33,9 +33,14 @@ a user's to make, not ours:
 
 | placement | surface | reflows the focused pane | size knob |
 |---|---|---|---|
-| `bottom` (default) | split below | yes | `height`, rows |
-| `right` | split beside | yes | `width`, columns |
-| `popup` | centered float | **no** | `width` × `height`, outer cells |
+| `bottom` (default) | split below | yes | `height`, rows (min 3) |
+| `right` | split beside | yes | `width`, columns (min 8) |
+| `popup` | centered float | **no** | `width` × `height`, outer cells (min 20 × 6) |
+
+Sizes below those minimums are clamped silently — there is no menu to
+render in less. A split is resized to its size in either direction from
+the half herdr opens it at, bounded only by herdr's own [0.1, 0.9] ratio
+clamp, so a `height` past 90% of the tab lands at 90%.
 
 `top` and `left` are **not expressible**: herdr 0.7.5's `--direction` takes
 only `down` and `right` and rejects `up`/`left` outright, and the workaround
@@ -163,10 +168,12 @@ publish time.
   default. Superseded in part: the popup is now an **option**
   (`placement = "popup"`), because it is the one surface that never
   reflows the focused pane — measured, not assumed. It pays for that with
-  occlusion, with a breadcrumb it has to draw in its own body (a popup has
-  no pane id, so nothing can retitle its border), and with press-again-to-
-  close, which herdr cannot deliver to a focused popup. A trade, offered
-  rather than made for the user. Full-screen modal stays rejected.
+  occlusion and with a breadcrumb it has to draw in its own body (a popup
+  has no pane id, so nothing can retitle its border). Press-again-to-close
+  herdr cannot deliver to a focused popup, so the menu implements it
+  itself: the keys herdr won't act on arrive in the pane, and the binding
+  they came from is readable in herdr's config. A trade, offered rather
+  than made for the user. Full-screen modal stays rejected.
 - **Seeded-full-copy config** — transparent but frozen; updates never reach
   the user. Overlay + commented seed + `defaults` subcommand covers
   discoverability without the fork. Scoped, not reversed (hw-b422): the

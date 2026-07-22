@@ -37,6 +37,26 @@ if RESOLVED=$("$BIN" surface 2>/dev/null); then
   done <<<"$RESOLVED"
 fi
 
+# True while the lock still has an owner. Either a launcher we can see
+# running, or one so new it hasn't stamped its pid yet: `mkdir` claims the
+# lock and the stamp lands a moment later, and a press that reads the
+# empty dir in between must not take it for a crash leftover and reclaim
+# it — that is two menus on screen, and one launcher's trap deleting the
+# other's live lock.
+lock_has_owner() {
+  local owner
+  owner=$(cat "$LOCK/launcher" 2>/dev/null || true)
+  if [ -n "$owner" ]; then
+    # Matched on the command line, not just liveness: pids get recycled,
+    # and a stranger holding this one would wedge the menu shut forever.
+    case "$(ps -p "$owner" -o args= 2>/dev/null || true)" in
+      *open-menu.sh*) return 0 ;;
+    esac
+    return 1
+  fi
+  [ -n "$(find "$LOCK" -maxdepth 0 -mmin -1 2>/dev/null || true)" ]
+}
+
 # True when the menu that owns the lock was told to close itself.
 close_open_menu() {
   local pane pid
@@ -59,9 +79,16 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   if close_open_menu; then
     exit 0 # toggle: told the open menu to close itself
   fi
+  if lock_has_owner; then
+    exit 0 # still opening — let it finish rather than race it
+  fi
   rm -rf "$LOCK" # stale (crash leftover) — reclaim and open fresh
   mkdir "$LOCK" 2>/dev/null || exit 0
 fi
+# Stamp the lock before anything slow: opening the pane takes long enough
+# for a second press to land inside it, and this is what tells that press
+# the menu is on its way up.
+printf '%s\n' "$$" >"$LOCK/launcher"
 
 FIFO="$STATE_DIR/menu-$$.done"
 mkfifo "$FIFO"
