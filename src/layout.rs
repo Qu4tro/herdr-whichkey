@@ -187,6 +187,22 @@ pub fn positions(
     let children =
         (0..n).map(|_| tree.new_leaf(Style::default())).collect::<Result<Vec<_>, _>>()?;
     let gap = if justify.wants_gutter_gap() { gutter } else { 0 };
+    // Content that doesn't fit is laid from the start, whatever the
+    // distribution asked for — CSS calls this a `safe` alignment. Centered
+    // (or end-aligned) overflow begins at a negative offset, and the clamp
+    // below folds those tracks onto their neighbours' cells: two items
+    // drawn over each other, and a click that fires the one underneath
+    // (h1-xt69, at the documented 20×6 popup minimum). Starting from the
+    // edge shows the first items whole instead of a window into the
+    // middle of the level.
+    let overflows = |content: usize, area: usize, d: Distribute| {
+        if content > area {
+            AlignContent::START
+        } else {
+            d.content()
+        }
+    };
+    let content_cols = ncols * item_width + ncols.saturating_sub(1) * gap;
     let root = tree.new_with_children(
         Style {
             display: Display::Grid,
@@ -195,8 +211,8 @@ pub fn positions(
             grid_template_rows: vec![length(1.0_f32); nrows],
             grid_auto_flow: GridAutoFlow::Column,
             gap: Size { width: length(gap as f32), height: length(0.0_f32) },
-            justify_content: Some(justify.content()),
-            align_content: Some(align.content()),
+            justify_content: Some(overflows(content_cols, area_cols, justify)),
+            align_content: Some(overflows(nrows, area_rows, align)),
             ..Default::default()
         },
         &children,

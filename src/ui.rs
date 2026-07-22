@@ -746,6 +746,42 @@ mod tests {
         }
     }
 
+    /// The documented minimum for a popup: 20×6, so an 18-cell interior
+    /// with two item rows once the breadcrumb and footer are carved off —
+    /// room for two of the level's 18-cell cells. The three columns it
+    /// takes to hold eight items don't fit, and a centered grid that
+    /// doesn't fit used to start at a negative x and clamp two columns
+    /// onto the same cells: overlapping text, and a click that fired the
+    /// item underneath the one it pointed at (h1-xt69).
+    #[test]
+    fn the_narrowest_documented_popup_never_stacks_two_items_on_one_cell() {
+        let lay = LayoutConfig { placement: layout::Placement::Popup, ..Default::default() };
+        let level = level();
+        let (cols, rows) = (18u16, 4u16); // 20×6 less herdr's border
+        let (top, item_rows) = item_area(&lay, rows);
+        assert_eq!((top, item_rows), (1, 2)); // breadcrumb, items, footer
+        let (_, item_width, places) = grid(&level, &lay, cols as usize, item_rows).unwrap();
+
+        let shown: Vec<_> = places
+            .iter()
+            .enumerate()
+            .filter(|(_, &(x, y))| drawn(x, y, item_width, cols as usize, item_rows))
+            .collect();
+        // Two cells of room means two items, and they are the level's
+        // first two — an overflowing grid is laid from the start, so what
+        // shows is a prefix of the level and not a window into its middle.
+        assert_eq!(shown.iter().map(|&(i, _)| i).collect::<Vec<_>>(), vec![0, 1]);
+        for (i, &cell) in &shown {
+            assert_eq!(
+                shown.iter().filter(|(_, &c)| c == cell).count(),
+                1,
+                "item {i} shares {cell:?}"
+            );
+            let (col, row) = (cell.0 as u16, (cell.1 + top) as u16);
+            assert_eq!(hit(&level, &lay, cols, rows, col, row).unwrap(), Some(*i));
+        }
+    }
+
     #[test]
     fn group_cells_are_wider_by_the_marker() {
         let lay = LayoutConfig::default();
