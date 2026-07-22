@@ -357,9 +357,24 @@ fn grid(
         .iter()
         .map(|(k, l, g)| width(k) + 2 + width(l) + if *g { 2 } else { 0 })
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        // A level wider than its pane is drawn clipped, not dropped. At the
+        // documented minimum for a right split (`width = 8`, six cells of
+        // interior) the root level measures 18, and every cell failing to
+        // fit would leave the surface blank — a clipped label reads, a
+        // blank pane does not.
+        .min(cols);
     let places = layout::positions(texts.len(), item_width, cols, item_rows, lay)?;
     Ok((texts, item_width, places))
+}
+
+/// One cell's variable parts, cut to the room it actually has: the label
+/// gives up cells to the group marker rather than pushing it past the
+/// pane, since a cell may now be as wide as the pane itself. Rendering
+/// draws these; the tests measure them.
+fn cell_parts(key: &str, label: &str, group: bool, avail: usize) -> (String, &'static str) {
+    let marker = if group { " ›" } else { "" };
+    (clip(label, avail.saturating_sub(width(key) + 2 + width(marker))), marker)
 }
 
 /// Off-screen cells are drawn by nobody, so they are clickable by nobody.
@@ -466,6 +481,7 @@ fn render(
             }
             queue!(out, style::Print(" ".repeat(item_width.min(cols_u.saturating_sub(x)))))?;
         }
+        let (label, marker) = cell_parts(key, label, *group, cols_u.saturating_sub(x));
         queue!(
             out,
             cursor::MoveTo(x as u16, y),
@@ -474,11 +490,10 @@ fn render(
             SetForegroundColor(pal.dim),
             style::Print("  "),
             SetForegroundColor(pal.fg),
-            style::Print(clip(label, cols_u.saturating_sub(x + width(key) + 2)))
+            style::Print(label),
+            SetForegroundColor(pal.dim),
+            style::Print(marker)
         )?;
-        if *group {
-            queue!(out, SetForegroundColor(pal.dim), style::Print(" ›"))?;
-        }
         if hot {
             queue!(out, SetAttribute(Attribute::Reset), SetBackgroundColor(pal.bg))?;
         }
@@ -698,6 +713,36 @@ mod tests {
                     assert!(drawn(x, y, item_width, 20, 4), "hit an undrawn cell at {col},{row}");
                 }
             }
+        }
+    }
+
+    /// The documented minimum for a right split: `width = 8` less herdr's
+    /// border leaves six cells, and the root level's cells measure 18. Every
+    /// item is still drawn and still clickable — dropping the ones that
+    /// don't fit whole would leave the surface blank, which is the one
+    /// outcome a menu can't recover from.
+    #[test]
+    fn the_narrowest_documented_pane_clips_its_items_instead_of_dropping_them() {
+        let lay = LayoutConfig { placement: layout::Placement::Right, ..Default::default() };
+        let mut level = level();
+        level[0].kind = NodeKind::Group(Vec::new()); // the marker competes too
+        let (cols, rows) = (6u16, 9u16); // eight items and the footer
+        let (top, item_rows) = item_area(&lay, rows);
+        let (texts, item_width, places) = grid(&level, &lay, cols as usize, item_rows).unwrap();
+        assert_eq!(item_width, cols as usize, "the cell caps at the pane, not the label");
+
+        for (i, &(x, y)) in places.iter().enumerate() {
+            assert!(drawn(x, y, item_width, cols as usize, item_rows), "item {i} dropped");
+            assert_eq!(hit(&level, &lay, cols, rows, x as u16, (y + top) as u16).unwrap(), Some(i));
+            // And what gets drawn stays inside the pane: the label pays for
+            // the group marker rather than the marker running off the edge.
+            let (key, label, group) = &texts[i];
+            let (label, marker) = cell_parts(key, label, *group, cols as usize - x);
+            assert!(
+                width(key) + 2 + width(&label) + width(marker) <= cols as usize,
+                "item {i} draws {} cells into {cols}",
+                width(key) + 2 + width(&label) + width(marker)
+            );
         }
     }
 

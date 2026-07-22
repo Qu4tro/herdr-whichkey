@@ -49,15 +49,20 @@ struct HerdrConfig {
 }
 
 /// One keystroke: a key plus the modifiers that must be held with it.
-/// Shift is not one of them — it rides on the character (`shift+g`
-/// arrives as `G`, same as [`crate::keys::parse_key`] reads it), so
-/// [`normalize`] folds it into `code` and the case of the character is
-/// what tells `shift+g` from `g`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Chord {
     code: KeyCode,
     ctrl: bool,
     alt: bool,
+    /// Whether shift must be held — `None` when it is already answered by
+    /// `code` and comparing it again could only reject a correct match: a
+    /// letter carries shift in its case (`shift+g` *is* `G`, and terminals
+    /// disagree about whether they set the modifier for it too), and a
+    /// ctrl'd character carries neither the case nor, on most terminals,
+    /// the modifier. Everything else — space, digits, the function keys,
+    /// enter, the arrows — has no shifted form of its own, so the modifier
+    /// is the only thing that tells `shift+space` from `space`.
+    shift: Option<bool>,
 }
 
 impl Chord {
@@ -65,6 +70,7 @@ impl Chord {
         self.code == normalize(ev.code, self.ctrl)
             && self.ctrl == ev.modifiers.contains(KeyModifiers::CONTROL)
             && self.alt == ev.modifiers.contains(KeyModifiers::ALT)
+            && self.shift.is_none_or(|s| s == ev.modifiers.contains(KeyModifiers::SHIFT))
     }
 }
 
@@ -179,14 +185,18 @@ fn parse_chord(token: &str) -> Option<Chord> {
             _ => code = Some(key_code(part)?),
         }
     }
-    // Shift is spent here rather than kept as a modifier: it is the
-    // shifted character that reaches us, so `shift+g` is `G` — the same
-    // reading the menu's own key parser gives it.
-    let code = match code? {
-        KeyCode::Char(c) if shift => KeyCode::Char(c.to_ascii_uppercase()),
-        code => code,
+    // Where shift has a character of its own to hide in it is spent here
+    // rather than kept as a modifier — `shift+g` is `G`, the same reading
+    // the menu's own key parser gives it. Where it hasn't, it stays a
+    // modifier to compare, or `shift+space` would be plain space.
+    let (code, shift) = match code? {
+        KeyCode::Char(c) if c.is_alphabetic() => {
+            (KeyCode::Char(if shift { c.to_ascii_uppercase() } else { c }), None)
+        }
+        KeyCode::Char(c) if ctrl => (KeyCode::Char(c), None),
+        code => (code, Some(shift)),
     };
-    Some(Chord { code: normalize(code, ctrl), ctrl, alt })
+    Some(Chord { code: normalize(code, ctrl), ctrl, alt, shift })
 }
 
 /// herdr's key vocabulary, as far as a keystroke inside a pane can tell
@@ -337,7 +347,7 @@ mod tests {
         assert_eq!(t.feed(&plain('g')), Step::Complete);
         assert_eq!(
             Trigger::parse("shift+g", "ctrl+b").unwrap().chords,
-            [Chord { code: KeyCode::Char('G'), ctrl: false, alt: false }]
+            [Chord { code: KeyCode::Char('G'), ctrl: false, alt: false, shift: None }]
         );
 
         // A ctrl chord carries no case at all — the byte is the same
@@ -345,6 +355,33 @@ mod tests {
         let mut t = Trigger::parse("prefix+space", "ctrl+B").unwrap();
         assert_eq!(t.feed(&ctrl('b')), Step::Pending);
         assert_eq!(t.feed(&plain(' ')), Step::Complete);
+    }
+
+    /// Keys with no shifted character to hide in: shift stays a modifier,
+    /// or `shift+space` would be plain space and every space in the menu
+    /// would close a popup.
+    #[test]
+    fn shift_is_compared_where_the_key_cannot_carry_it() {
+        let shifted = |code| press(code, KeyModifiers::SHIFT);
+
+        let mut t = Trigger::parse("prefix+shift+space", "ctrl+b").unwrap();
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&plain(' ')), Step::No);
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&shifted(KeyCode::Char(' '))), Step::Complete);
+
+        // And the plain binding is not closed by the shifted key.
+        let mut t = Trigger::parse("prefix+space", "ctrl+b").unwrap();
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&shifted(KeyCode::Char(' '))), Step::No);
+
+        // Same for the keys that are not characters at all.
+        let mut t = Trigger::parse("shift+f12", "ctrl+b").unwrap();
+        assert_eq!(t.feed(&press(KeyCode::F(12), KeyModifiers::NONE)), Step::No);
+        assert_eq!(t.feed(&shifted(KeyCode::F(12))), Step::Complete);
+        let mut t = Trigger::parse("shift+enter", "ctrl+b").unwrap();
+        assert_eq!(t.feed(&press(KeyCode::Enter, KeyModifiers::NONE)), Step::No);
+        assert_eq!(t.feed(&shifted(KeyCode::Enter)), Step::Complete);
     }
 
     #[test]
@@ -369,12 +406,18 @@ description = "whichkey menu"
         let t = Trigger::from_toml(cfg).unwrap();
         assert_eq!(t.label(), "prefix+space");
         assert_eq!(t.chords.len(), 2);
-        assert_eq!(t.chords[0], Chord { code: KeyCode::Char('b'), ctrl: true, alt: false });
+        assert_eq!(
+            t.chords[0],
+            Chord { code: KeyCode::Char('b'), ctrl: true, alt: false, shift: None }
+        );
 
         // A custom prefix applies to our binding too.
         let with_prefix = format!("[keys]\nprefix = \"f12\"\n{cfg}");
         let t = Trigger::from_toml(&with_prefix).unwrap();
-        assert_eq!(t.chords[0], Chord { code: KeyCode::F(12), ctrl: false, alt: false });
+        assert_eq!(
+            t.chords[0],
+            Chord { code: KeyCode::F(12), ctrl: false, alt: false, shift: Some(false) }
+        );
     }
 
     #[test]
