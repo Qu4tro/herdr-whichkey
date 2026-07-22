@@ -1,7 +1,8 @@
 //! herdr-whichkey — blezz/which-key-style single-keystroke action menu
 //! for herdr. Runs inside a herdr plugin pane docked as a bottom split:
-//! built-in defaults overlaid with the user's whichkey.toml, rendered as
-//! key hints in columns, dispatched on single keystrokes.
+//! the menu tree from the user's keys file (the shipped one until `init`
+//! writes it), settings from whichkey.toml, rendered as key hints in
+//! columns, dispatched on single keystrokes.
 
 mod config;
 mod context;
@@ -20,13 +21,18 @@ use crate::model::{Node, NodeKind};
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        Some("defaults") => print_defaults(),
+        Some("defaults") => match args.collect::<Vec<_>>().as_slice() {
+            [] => print_defaults(false),
+            [flag] if flag == "--shipped" => print_defaults(true),
+            _ => anyhow::bail!("usage: herdr-whichkey defaults [--shipped]"),
+        },
+        Some("init") => init(),
         Some("--version") | Some("-V") => {
             println!("herdr-whichkey {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         None | Some("menu") => run_menu(),
-        Some(other) => anyhow::bail!("unknown subcommand: {other} (try: menu, defaults)"),
+        Some(other) => anyhow::bail!("unknown subcommand: {other} (try: menu, defaults, init)"),
     }
 }
 
@@ -59,7 +65,7 @@ fn run_menu() -> Result<()> {
 
     // Config first: the split fit below wants `[layout] height`, and
     // loading a local TOML is nothing next to the herdr calls that follow.
-    let loaded = config::load(true);
+    let loaded = config::load();
 
     // Split placement opens at ratio 0.5 and can't be sized at open time
     // — shrink to strip height before the first frame paints (the
@@ -112,18 +118,60 @@ fn load_tree(cfg: config::Config) -> Result<Menu> {
     Ok((model::prune_unavailable(tree, &have_bin, &have_plugin), ctx, cfg.layout, cfg.ui))
 }
 
-/// `herdr-whichkey defaults` — the live resolved tree (defaults + user
-/// overlay), annotated with what adaptive detection would hide right now.
-fn print_defaults() -> Result<()> {
-    let cfg = config::load(false)?;
-    let tree = config::build_tree(&cfg.entries)?;
+/// `herdr-whichkey init` — write the shipped menu into the keys file and a
+/// commented settings stub into whichkey.toml. Existing files are never
+/// clobbered; a pre-split whichkey.toml is moved aside rather than kept,
+/// since its `[menu]` table would keep the menu from loading at all.
+fn init() -> Result<()> {
+    let mut ported = None;
+    for wrote in config::init()? {
+        match wrote {
+            config::Wrote::Created(p) => println!("wrote {}", p.display()),
+            config::Wrote::Kept(p) => println!("{} already exists — left alone", p.display()),
+            config::Wrote::MovedAside { from, to } => {
+                println!("moved {} → {}", from.display(), to.display());
+                ported = Some(to);
+            }
+        }
+    }
+    if let Some(old) = ported {
+        println!(
+            "\n{} still holds your old [menu] table — nothing else reads it now.\n\
+             Port the entries you want into the keys file above; `herdr-whichkey\n\
+             defaults --shipped` prints what that file started as.",
+            old.display()
+        );
+    }
+    Ok(())
+}
+
+/// `herdr-whichkey defaults` — the live menu tree, annotated with what
+/// adaptive detection would hide right now. `--shipped` prints the tree
+/// `init` would write instead, so a customised keys file can be diffed
+/// against the one the plugin ships.
+fn print_defaults(shipped: bool) -> Result<()> {
+    let (header, entries) = if shipped {
+        (
+            "# shipped menu (what `herdr-whichkey init` writes)".to_string(),
+            config::shipped_entries(),
+        )
+    } else {
+        let cfg = config::load()?;
+        let header = match &cfg.menu_source {
+            config::MenuSource::KeysFile(p) => format!("# menu from {}", p.display()),
+            config::MenuSource::BuiltIn => {
+                "# built-in menu — no keys file yet (`herdr-whichkey init` writes one)".to_string()
+            }
+        };
+        (header, cfg.entries)
+    };
+    let tree = config::build_tree(&entries)?;
 
     let plugins = dispatch::installed_plugins();
     let have_bin = |b: &str| dispatch::binary_on_path(b);
     let have_plugin = |p: &str| plugins.as_ref().map(|set| set.contains(p)).unwrap_or(true);
 
-    let mut out =
-        format!("# resolved menu (defaults + {})\n", config::user_config_path().display());
+    let mut out = format!("{header}\n");
     print_nodes(&mut out, &tree, "", &have_bin, &have_plugin);
     // One buffered write, EPIPE ignored — `defaults | head` must not panic.
     use std::io::Write as _;

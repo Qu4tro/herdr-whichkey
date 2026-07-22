@@ -67,7 +67,7 @@ pub fn now_stamp() -> u64 {
         .unwrap_or(0)
 }
 
-fn expand_env_tilde(input: &str) -> String {
+pub fn expand_env_tilde(input: &str) -> String {
     let mut s = String::with_capacity(input.len());
     if let Some(rest) = input.strip_prefix("~/") {
         s.push_str(&std::env::var("HOME").unwrap_or_else(|_| "~".into()));

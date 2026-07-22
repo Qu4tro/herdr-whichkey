@@ -55,15 +55,37 @@ herdr-whichkey defaults      # resolved tree, with (hidden: …) annotations
 
 ## Configuration
 
-Your menu lives in one TOML file (`herdr plugin config-dir herdr-whichkey`,
-then `whichkey.toml` — seeded on first run with every default as a commented
-line). It overlays the built-in defaults: you write only what you add or
-change.
+Two files, in the plugin config dir (`herdr plugin config-dir herdr-whichkey`):
+
+| file | holds | who owns it |
+|---|---|---|
+| `keys.toml` | your whole menu | **you** — written once by `init`, never touched again |
+| `whichkey.toml` | `[layout]` `[theme]` `[ui]` settings | shared: anything you don't set tracks the built-in default |
+
+Out of the box neither exists and the shipped menu renders, so the plugin
+works the moment herdr installs it. Take the menu over when you want it:
+
+```bash
+herdr-whichkey init          # writes keys.toml (the shipped menu) + a whichkey.toml stub
+```
+
+`init` never overwrites a file that's already there. After it runs, `keys.toml`
+**is** the menu — nothing is overlaid onto it, and **file order is display
+order**, so moving a line moves the item. Settings work the other way round:
+`whichkey.toml` is sparse, every knob in the stub starts commented out, and a
+knob you leave commented keeps tracking its built-in default as the plugin
+updates. That asymmetry is deliberate — your bindings are yours to freeze,
+the rest keeps improving.
+
+```bash
+herdr-whichkey defaults --shipped    # the menu init writes — diff yours against it
+```
+
+### The menu (`keys.toml`)
 
 ```toml
 [menu]
 "d"   = { label = "dotfiles", run = "chezmoi edit", in = "pane" }
-"g g" = false                  # hide a default item (and any subtree)
 "t n" = { label = "tab here", herdr = "tab create --cwd {cwd}" }
 ```
 
@@ -81,6 +103,41 @@ change.
 - `stick = true` keeps the menu open for repeatable actions (resize). Set it on
   each action item — it isn't inherited, and a group that sets it is rejected.
 - `requires = "binary"` hides the item unless the binary is on PATH.
+- To drop an item, delete its line. There's no `= false` — nothing to hide
+  against once the file is the whole menu.
+- Two lines naming the same key are rejected as a typo rather than one quietly
+  winning — including different spellings of it: `"g  s"` is `"g s"`, and
+  `"shift+g"`, `"?"` are `"G"`, `"question"`.
+- A group's position is its own line's. Writing `"g x"` before `"g"` springs
+  the `g` group into existence early, but the `"g" = { label = … }` line is
+  what anchors it, so moving that line moves the group and everything under it.
+  A group you never declare sits where it first appears.
+
+Keeping the menu elsewhere — in your dotfiles, say — is one line in
+`whichkey.toml`, relative to that file unless absolute, with `~` and `$VARS`
+expanded:
+
+```toml
+keys_path = "~/dotfiles/whichkey-keys.toml"
+```
+
+> **Upgrading from v0.2.x?** The old `whichkey.toml` had a `[menu]` table that
+> overlaid the defaults. It is no longer read, and the plugin says so on
+> startup rather than ignoring it. Two ways out:
+>
+> - Run `herdr-whichkey init`. It writes the shipped menu to `keys.toml` (or to
+>   your `keys_path`, which it carries over into the new file), then renames
+>   your old config to `whichkey.toml.pre-split` — nothing is deleted — and
+>   writes a fresh settings stub. Port the `[menu]` entries you want out of the
+>   `.pre-split` file into the keys file by hand. If the rest of the old config
+>   doesn't parse, `init` refuses rather than migrating settings it couldn't
+>   read: fix what it reports, then run it again.
+> - Or migrate by hand: move the `[menu]` table into `keys.toml` yourself,
+>   dropping any `= false` lines and adding back the defaults you want to keep
+>   (`herdr-whichkey defaults --shipped` prints them).
+>
+> Either way your bindings need one pass by hand: they used to be a diff
+> against the defaults, and `keys.toml` is the whole menu.
 
 ## Mouse
 

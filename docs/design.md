@@ -55,7 +55,7 @@ goal. Resolved in the live-validation milestone.
 - Deferred to v2: send-keys-to-previous-pane leaves; running a TUI *inside*
   the strip (embedded PTY, floax-style).
 
-### Config: flat key-paths, overlay on built-ins
+### Config: flat key-paths, overlay for settings only
 
 One TOML file in the plugin config dir (`herdr plugin config-dir
 herdr-whichkey`). Keys are keystroke sequences in herdr's own key-string
@@ -79,6 +79,34 @@ seeded-full-copy model):
   resolved default — uncomment a line to override it.
 - `herdr-whichkey defaults` prints the live resolved tree (post
   plugin-detection) anytime.
+
+**Amended (hw-b422):** the overlay stands for *settings* and is gone for
+*bindings*. One file could not have both properties it needed — settings want
+defaults that keep updating, bindings want the file to be the order — so the
+config is two files, each getting the one it needs:
+
+| | whichkey.toml | keys file (`keys.toml`) |
+|---|---|---|
+| holds | `[layout]` `[theme]` `[ui]`, `keys_path` | the whole `[menu]` tree |
+| sparse? | yes — undeclared falls back to built-in | no — it *is* the menu |
+| we update it | yes, via the built-in defaults it falls back to | never, after `init` writes it |
+| `init` writes it | commented stub | uncommented, verbatim |
+
+The asymmetry in that last row is the whole design: a commented knob keeps
+tracking a default we still own, an uncommented binding is frozen because it
+is now the user's. File order in the keys file is display order.
+
+Consequences: no overlay for bindings means no `= false` (nothing to hide
+against) and no replace-in-place (nothing to replace) — both deleted rather
+than kept working-but-inert, since a `= false` line in a single-source file
+would parse cleanly and silently do nothing. Two paths that normalize to the
+same sequence (`"g s"` and `"g  s"`) are a hard error for the same reason.
+Discoverability moves from a first-run seed to `herdr-whichkey init` on
+demand, plus `defaults --shipped` to print what init would write, so a
+customised tree can be diffed against the shipped one.
+
+Until `init` runs, the compiled-in tree renders: the plugin works the moment
+herdr installs it, and taking the menu over is a deliberate act.
 
 ### Default tree: adaptive
 
@@ -119,7 +147,12 @@ publish time.
   disruption; bottom strip keeps the workspace readable.
 - **Seeded-full-copy config** — transparent but frozen; updates never reach
   the user. Overlay + commented seed + `defaults` subcommand covers
-  discoverability without the fork.
+  discoverability without the fork. Scoped, not reversed (hw-b422): the
+  objection only ever bit **bindings**, and bindings are now deliberately
+  outside our update scope — nobody's defaults but the user's should decide
+  which key does what, so a frozen copy of them is the point rather than the
+  cost. It stands unchanged for **settings**, which stay sparse and keep
+  falling back to defaults we go on improving.
 - **Nested-tables / array-of-items config schemas** — more ceremony per item,
   reorganizing a branch touches every child header.
 - **Send-keys leaf in v1** — focus tracking and timing make it the flakiest
@@ -127,6 +160,8 @@ publish time.
 
 ## v2 backlog
 
-Send-keys leaves · embedded-PTY runs in the strip · defaults sync surface
-(refreshing the commented seed after updates) · whatever live validation
+Send-keys leaves · embedded-PTY runs in the strip · ~~defaults sync surface
+(refreshing the commented seed after updates)~~ — dropped by hw-b422: it only
+ever applied to bindings, and the keys file is the user's to sync or not
+(`defaults --shipped` is the diff surface) · whatever live validation
 surfaces. Tracked as tk tickets at publish time.

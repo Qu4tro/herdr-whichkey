@@ -1,9 +1,15 @@
-# Built-in default menu for herdr-whichkey.
+# herdr-whichkey — your menu.
 #
-# Users never edit this file — their whichkey.toml overlays it: an entry with
-# the same path replaces the default, `= false` removes it. Items with
-# `requires = "<binary>"` auto-hide when the binary is missing; `action =`
-# items auto-hide when their plugin isn't installed.
+# `herdr-whichkey init` wrote this file once from the shipped menu, and the
+# plugin never touches it again: it is yours to edit, reorder and delete from.
+# File order is display order, so moving a line moves the item.
+#
+# Keys are herdr key-strings: "g s" means press g, then s. Items with
+# `requires = "<binary>"` hide themselves when the binary is missing, and
+# `action =` items hide when their plugin isn't installed.
+# Placeholders: {pane} {tab} {workspace} {cwd} {stamp}.
+#
+# Settings — layout, theme, mouse — live in whichkey.toml, not here.
 
 [menu]
 "a"   = { label = "agents" }

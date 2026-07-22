@@ -3,14 +3,6 @@
 use anyhow::{bail, Result};
 use serde::Deserialize;
 
-/// One `"g s" = { … }` entry as written in config. `false` becomes `Hide`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum Entry {
-    Hide(bool),
-    Spec(ItemSpec),
-}
-
 /// Where a `run` command executes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
