@@ -48,7 +48,7 @@ checksum_ok() { # file expected-sha
 }
 
 fetch_prebuilt() {
-  local triple sha url tmp
+  local triple sha url tmp stage
   triple="$(host_triple)" || return 1
   sha="$(sha_for "$triple")"
   [ -n "$sha" ] || return 1
@@ -63,9 +63,22 @@ fetch_prebuilt() {
     echo "herdr-whichkey: checksum mismatch for $url — refusing prebuilt, building from source" >&2
     return 1
   fi
-  mkdir -p "$DEST_DIR"
-  tar -xzf "$tmp/pkg.tar.gz" -C "$DEST_DIR" herdr-whichkey
-  chmod +x "$DEST_DIR/herdr-whichkey"
+  # Unpack into a staging dir and rename into place as the very last step, so
+  # a tar that dies partway leaves its debris in staging rather than a
+  # truncated herdr-whichkey at the path [[panes]] runs. Staging lives under
+  # DEST_DIR, not $tmp, to keep that last step a same-filesystem rename: a
+  # cross-device mv copies, and a copy can fail half-written.
+  #
+  # Every step carries its own `|| return 1`. errexit cannot be relied on here
+  # — the `if fetch_prebuilt` call site puts the whole function body in a
+  # condition context, which disables it.
+  mkdir -p "$DEST_DIR" || return 1
+  stage="$(mktemp -d "$DEST_DIR/.stage-XXXXXX")" || return 1
+  # shellcheck disable=SC2064  # expand both paths now, not at exit
+  trap "rm -rf '$tmp' '$stage'" EXIT
+  tar -xzf "$tmp/pkg.tar.gz" -C "$stage" herdr-whichkey || return 1
+  chmod +x "$stage/herdr-whichkey" || return 1
+  mv "$stage/herdr-whichkey" "$DEST_DIR/herdr-whichkey" || return 1
 }
 
 if fetch_prebuilt; then
