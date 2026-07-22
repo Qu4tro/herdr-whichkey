@@ -171,6 +171,15 @@ pub fn positions(
             let c = c.min(n);
             (c, n.div_ceil(c))
         }
+        // A right split is a list, whatever the labels measure: short
+        // ones fit two columns in the default 30-cell interior, and two
+        // columns is not a list. It still spills into more columns when
+        // there are more items than rows to hold them — clipping half a
+        // level is worse than a second column.
+        None if cfg.placement == Placement::Right => {
+            let c = n.div_ceil(area_rows.max(1)).clamp(1, n);
+            (c, n.div_ceil(c))
+        }
         None => balance(n, area_rows, item_width, area_cols, gutter),
     };
 
@@ -269,10 +278,23 @@ mod tests {
         let bottom = at(Placement::Bottom, 179, 4);
         assert_eq!((bottom[0], bottom[1], bottom[7]), ((21, 1), (21, 3), (140, 3)));
 
-        // Right: one 30-wide column, so a single list of 8 — packed at the
-        // top-left of the tall area rather than spread down all 20 rows.
+        // Right: a single list of 8 — packed at the top-left of the tall
+        // area rather than spread down all 20 rows.
         let right = at(Placement::Right, 30, 20);
         assert_eq!(right, (0..8).map(|y| (0, y)).collect::<Vec<_>>());
+
+        // Still one column with labels short enough for two — width-fitting
+        // would make that a grid (the resize submenu's `l  right` measures
+        // 8, and 8-wide items fit twice over in 30 cells), and a grid is
+        // not what this surface promises.
+        assert_eq!(balance(8, 20, 8, 30, 4), (2, 4));
+        let list = LayoutConfig { placement: Placement::Right, ..Default::default() };
+        let short = positions(8, 8, 30, 20, &list).unwrap();
+        assert_eq!(short, (0..8).map(|y| (0, y)).collect::<Vec<_>>());
+        // Unless the items outrun the rows: 8 items in 3 rows spill into
+        // columns rather than losing five of them off the bottom.
+        let spill = positions(8, 8, 30, 3, &list).unwrap();
+        assert_eq!((spill[0], spill[2], spill[3]), ((0, 0), (0, 2), (12, 0)));
 
         // Popup: a boxed grid centered in the float's body. 58×6 (a 60×10
         // popup less herdr's border and our breadcrumb and footer rows)

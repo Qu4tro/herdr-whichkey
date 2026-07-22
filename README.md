@@ -232,8 +232,9 @@ twice — the one thing the strip exists to avoid.
 Items flow into a grid: the area's width decides the column count, and
 CSS content-distribution keywords (computed by [taffy], the CSS grid
 engine) decide the spacing. Each placement defaults to what reads well on
-it — a spread footer grid at the bottom, a packed list on the right, a
-centered block in a popup — and the knobs override:
+it — a spread footer grid at the bottom, a single-column list on the
+right whatever the labels measure, a centered block in a popup — and the
+knobs override:
 
 ```toml
 [layout]

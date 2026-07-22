@@ -91,8 +91,14 @@ fn from_herdr_config() -> Option<Palette> {
 }
 
 /// herdr's own config.toml — the theme comes out of it, and so does the
-/// key binding that opens us (`trigger.rs`).
+/// key binding that opens us (`trigger.rs`). `HERDR_CONFIG_PATH` is
+/// herdr's documented override (`herdr --help`); it names the file
+/// itself, not a directory, and outranks the XDG location — measured, so
+/// a session started against a custom config reads as that session.
 pub fn herdr_config_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("HERDR_CONFIG_PATH").filter(|p| !p.is_empty()) {
+        return PathBuf::from(path);
+    }
     let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
     });

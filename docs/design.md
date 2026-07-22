@@ -56,7 +56,11 @@ this design is built to avoid. Cut rather than hacked (hw-y4df).
   until the menu closes** (done-fifo from the binary), because herdr may tear
   popup views down when the invoking action exits. Correct under both
   possible teardown semantics.
-- A trigger while the menu is already open is a no-op ("popup already open").
+- Pressing the trigger again closes the menu, by whichever of two routes the
+  surface leaves open. On a split herdr fires the action a second time and the
+  launcher's lock directory turns that into a close; on a popup the action
+  never fires — herdr routes every key into the focused pane — so the menu
+  matches the binding itself, read from herdr's `config.toml` (`trigger.rs`).
 
 ### Leaf types (v1)
 

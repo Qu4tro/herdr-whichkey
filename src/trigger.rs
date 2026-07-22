@@ -49,9 +49,10 @@ struct HerdrConfig {
 }
 
 /// One keystroke: a key plus the modifiers that must be held with it.
-/// Shift is not among them — herdr and crossterm both fold it into the
-/// character itself (`shift+g` arrives as `G`), so comparing it
-/// separately would only ever reject a match the user made correctly.
+/// Shift is not one of them — it rides on the character (`shift+g`
+/// arrives as `G`, same as [`crate::keys::parse_key`] reads it), so
+/// [`normalize`] folds it into `code` and the case of the character is
+/// what tells `shift+g` from `g`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Chord {
     code: KeyCode,
@@ -61,13 +62,20 @@ struct Chord {
 
 impl Chord {
     fn matches(&self, ev: &KeyEvent) -> bool {
-        let same_key = match (self.code, ev.code) {
-            (KeyCode::Char(a), KeyCode::Char(b)) => a.eq_ignore_ascii_case(&b),
-            (a, b) => a == b,
-        };
-        same_key
+        self.code == normalize(ev.code, self.ctrl)
             && self.ctrl == ev.modifiers.contains(KeyModifiers::CONTROL)
             && self.alt == ev.modifiers.contains(KeyModifiers::ALT)
+    }
+}
+
+/// The comparable form of a key. Case carries shift, so it is compared —
+/// except under ctrl, which loses it on the way here: ctrl+b and
+/// ctrl+shift+b are the same byte, and a config that spells one of them
+/// must not stop matching the other.
+fn normalize(code: KeyCode, ctrl: bool) -> KeyCode {
+    match code {
+        KeyCode::Char(c) if ctrl => KeyCode::Char(c.to_ascii_lowercase()),
+        code => code,
     }
 }
 
@@ -158,27 +166,37 @@ impl Trigger {
     }
 }
 
-/// One herdr key string ("ctrl+b", "space", "f12", "ctrl+alt+n").
+/// One herdr key string ("ctrl+b", "space", "f12", "shift+g").
 fn parse_chord(token: &str) -> Option<Chord> {
-    let (mut ctrl, mut alt, mut code) = (false, false, None);
-    for part in token.split('+').filter(|p| !p.trim().is_empty()) {
-        match part.trim().to_ascii_lowercase().as_str() {
+    let (mut ctrl, mut alt, mut shift, mut code) = (false, false, false, None);
+    for part in token.split('+').map(str::trim).filter(|p| !p.is_empty()) {
+        match part.to_ascii_lowercase().as_str() {
             "ctrl" | "control" => ctrl = true,
             "alt" | "opt" | "option" | "meta" => alt = true,
-            // Carried by the character herdr sends, or by nothing we can
-            // observe from inside a pane.
-            "shift" | "cmd" | "super" | "win" => {}
-            name => code = Some(key_code(name)?),
+            "shift" => shift = true,
+            // Nothing a keystroke read inside a pane can observe.
+            "cmd" | "super" | "win" => {}
+            _ => code = Some(key_code(part)?),
         }
     }
-    Some(Chord { code: code?, ctrl, alt })
+    // Shift is spent here rather than kept as a modifier: it is the
+    // shifted character that reaches us, so `shift+g` is `G` — the same
+    // reading the menu's own key parser gives it.
+    let code = match code? {
+        KeyCode::Char(c) if shift => KeyCode::Char(c.to_ascii_uppercase()),
+        code => code,
+    };
+    Some(Chord { code: normalize(code, ctrl), ctrl, alt })
 }
 
 /// herdr's key vocabulary, as far as a keystroke inside a pane can tell
 /// it apart: the special keys by name, function keys, the punctuation
 /// names the menu's own parser already knows, and single characters.
+/// Names are matched case-insensitively; a bare character is not, since
+/// its case is what shift comes through as.
 fn key_code(name: &str) -> Option<KeyCode> {
-    Some(match name {
+    let lower = name.to_ascii_lowercase();
+    Some(match lower.as_str() {
         "space" => KeyCode::Char(' '),
         "enter" | "return" => KeyCode::Enter,
         "tab" => KeyCode::Tab,
@@ -189,10 +207,10 @@ fn key_code(name: &str) -> Option<KeyCode> {
         "up" => KeyCode::Up,
         "down" => KeyCode::Down,
         _ => {
-            if let Some(n) = name.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
+            if let Some(n) = lower.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
                 return Some(KeyCode::F(n));
             }
-            match crate::keys::named_char(name) {
+            match crate::keys::named_char(&lower) {
                 Some(c) => KeyCode::Char(c),
                 None => {
                     let mut chars = name.chars();
@@ -301,11 +319,32 @@ mod tests {
         assert_eq!(t.feed(&press(KeyCode::F(12), KeyModifiers::NONE)), Step::Pending);
         assert_eq!(t.feed(&plain(',')), Step::Complete);
 
-        // shift rides on the character, so `shift+g` is `G` and matching
-        // is case-insensitive rather than modifier-exact.
+        // shift rides on the character: `shift+g` is `G`, and plain `g`
+        // is a different key — a menu item bound to it must still fire
+        // rather than closing the menu.
         let mut t = Trigger::parse("prefix+shift+g", "ctrl+b").unwrap();
         assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&plain('g')), Step::No);
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
         assert_eq!(t.feed(&press(KeyCode::Char('G'), KeyModifiers::SHIFT)), Step::Complete);
+
+        // And the other way around: an unshifted binding is not closed by
+        // the shifted key. `shift+g` and `G` are the same binding.
+        let mut t = Trigger::parse("prefix+g", "ctrl+b").unwrap();
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&press(KeyCode::Char('G'), KeyModifiers::SHIFT)), Step::No);
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&plain('g')), Step::Complete);
+        assert_eq!(
+            Trigger::parse("shift+g", "ctrl+b").unwrap().chords,
+            [Chord { code: KeyCode::Char('G'), ctrl: false, alt: false }]
+        );
+
+        // A ctrl chord carries no case at all — the byte is the same
+        // either way, so a prefix written `ctrl+B` still matches it.
+        let mut t = Trigger::parse("prefix+space", "ctrl+B").unwrap();
+        assert_eq!(t.feed(&ctrl('b')), Step::Pending);
+        assert_eq!(t.feed(&plain(' ')), Step::Complete);
     }
 
     #[test]
