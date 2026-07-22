@@ -63,9 +63,14 @@ fetch_prebuilt() {
     echo "herdr-whichkey: checksum mismatch for $url — refusing prebuilt, building from source" >&2
     return 1
   fi
-  mkdir -p "$DEST_DIR"
-  tar -xzf "$tmp/pkg.tar.gz" -C "$DEST_DIR" herdr-whichkey
-  chmod +x "$DEST_DIR/herdr-whichkey"
+  # Explicit `|| return 1` on every step below, not just the ones above: this
+  # function is called as an `if` condition, which disables errexit for its
+  # whole body. Without these a half-finished tar would fall through to chmod,
+  # whose success would be reported as the function's — an "installed prebuilt"
+  # log over a truncated binary.
+  mkdir -p "$DEST_DIR" || return 1
+  tar -xzf "$tmp/pkg.tar.gz" -C "$DEST_DIR" herdr-whichkey || return 1
+  chmod +x "$DEST_DIR/herdr-whichkey" || return 1
 }
 
 if fetch_prebuilt; then
