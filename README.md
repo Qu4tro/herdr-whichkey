@@ -33,10 +33,12 @@ herdr server reload-config
 
 `prefix` (Ctrl+B by default), then `space`, then single keys walk the menu.
 The strip docks as a 7-row split under the pane you're in and puts the
-layout back when it closes. Esc goes back up a level (and closes from the
-root), Backspace also goes back, Ctrl+C always closes — and pressing the
-trigger again closes the menu. Unknown keys just hint; nothing flashes.
-Items are [clickable](#mouse) too.
+layout back when it closes — or opens beside it, or floats over it, as
+[`[layout] placement`](#layout) says. Esc goes back up a level (and closes
+from the root), Backspace also goes back, Ctrl+C always closes — and
+pressing the trigger again closes the menu (except on `popup`, see
+[below](#layout)). Unknown keys just hint; nothing flashes. Items are
+[clickable](#mouse) too.
 
 ## Defaults
 
@@ -170,20 +172,63 @@ mouse = false     # keyboard-only; the strip stops requesting mouse input
 
 ## Layout
 
-Items flow into a footer-style grid: the strip width decides the column
-count, and CSS content-distribution keywords (computed by [taffy], the
-CSS grid engine) decide the spacing. Tune it in whichkey.toml:
+### Where the menu opens
+
+```toml
+[layout]
+placement = "bottom"   # bottom (default) | right | popup
+```
+
+| `placement` | what you get | reflows your pane | sized by |
+|---|---|---|---|
+| `bottom` | full-width strip split below the focused pane | yes | `height` |
+| `right` | tall narrow list split beside it | yes | `width` |
+| `popup` | centered float over the workspace | **no** | `width` × `height` |
+
+`width` and `height` are plain cell counts, and each placement uses the
+one along its own axis — that is the whole trade for keeping a single
+pair of knobs instead of three sets:
+
+```toml
+[layout]
+height = 7     # bottom: strip rows to shrink to (~2 go to pane chrome)
+width  = 32    # right:  columns to shrink to (~2 go to pane chrome)
+               # popup:  both, as the float's outer size (~2 each to its border)
+```
+
+The knob the placement doesn't use is ignored, not an error — switching
+placement doesn't mean rewriting the section.
+
+`top` and `left` aren't offered: herdr only splits `down` and `right`, and
+faking the others means splitting and then moving, which reflows your pane
+twice — the one thing the strip exists to avoid.
+
+**Popup caveats**, both herdr's rather than ours (see
+[docs/spike-popup-panes.md](docs/spike-popup-panes.md)):
+
+- **Pressing the trigger again does not close a popup.** herdr routes all
+  input to a focused popup, so the binding never reaches herdr to fire.
+  Esc and Ctrl+C close it, as always. Splits toggle as documented above.
+- A popup's border title is fixed, so the breadcrumb is drawn on the
+  popup's first body row instead — clicking it goes back up a level.
+
+### How items spread out
+
+Items flow into a grid: the area's width decides the column count, and
+CSS content-distribution keywords (computed by [taffy], the CSS grid
+engine) decide the spacing. Each placement defaults to what reads well on
+it — a spread footer grid at the bottom, a packed list on the right, a
+centered block in a popup — and the knobs override:
 
 ```toml
 [layout]
 justify = "space-evenly"  # columns: start | center | end |
 align   = "space-around"  # rows:      space-between | space-around | space-evenly
-height  = 7               # strip height in split rows (~2 are pane chrome)
 columns = 4               # pin the column count (default: fit the width)
 gutter  = 9               # cells between columns (default: half an item)
 ```
 
-`justify` spreads the columns across the strip, `align` spreads the rows
+`justify` spreads the columns across the area, `align` spreads the rows
 down it. `gutter` sets the spacing floor when fitting columns and the
 actual gap under `start`/`center`/`end` (the `space-*` modes make their
 own gaps).

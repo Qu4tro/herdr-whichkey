@@ -222,13 +222,42 @@ pub fn set_pane_title(title: &str) {
         .spawn();
 }
 
-/// Shrink our bottom-split pane to `target` rows before the first frame.
-/// Plugin splits always open at ratio 0.5 and take no ratio flag, and
-/// `pane resize` on a bottom-most pane can only grow it — so the shrink
-/// is a grow of the original pane (our split sibling) downward, by an
-/// exact ratio delta. Best-effort: on any failure the menu just stays at
-/// the 50% herdr gave it.
-pub fn fit_split_height(target: u16) {
+/// The axis a plugin split grows along: the `--direction` herdr opened it
+/// with, and the rect field that measures that same axis. herdr 0.7.5
+/// takes only these two directions, which is why there is no Up or Left
+/// (docs/spike-popup-panes.md).
+#[derive(Debug, Clone, Copy)]
+pub enum SplitAxis {
+    /// A strip below the focused pane, sized in rows.
+    Down,
+    /// A column to its right, sized in columns.
+    Right,
+}
+
+impl SplitAxis {
+    fn direction(self) -> &'static str {
+        match self {
+            SplitAxis::Down => "down",
+            SplitAxis::Right => "right",
+        }
+    }
+
+    /// The rect field along this axis — the one the ratio divides.
+    fn extent(self) -> &'static str {
+        match self {
+            SplitAxis::Down => "height",
+            SplitAxis::Right => "width",
+        }
+    }
+}
+
+/// Shrink our split pane to `target` cells along `axis` before the first
+/// frame. Plugin splits always open at ratio 0.5 and take no ratio flag,
+/// and `pane resize` on the far-side pane can only grow it — so the
+/// shrink is a grow of the original pane (our split sibling) along the
+/// same axis, by an exact ratio delta. Best-effort: on any failure the
+/// menu just stays at the 50% herdr gave it.
+pub fn fit_split(axis: SplitAxis, target: u16) {
     let Some(own) = std::env::var("HERDR_PANE_ID").ok().filter(|s| !s.is_empty()) else {
         return;
     };
@@ -243,19 +272,19 @@ pub fn fit_split_height(target: u16) {
     }) else {
         return;
     };
-    // The innermost down-split holding our pane. Its stored ratio is the
-    // exact value resize amounts add to — deriving it from row counts is
-    // off by the rounding herdr applied when it laid the rows out.
-    let Some((ratio_now, split_h)) = layout["splits"].as_array().and_then(|ss| {
+    // The innermost split along this axis holding our pane. Its stored
+    // ratio is the exact value resize amounts add to — deriving it from
+    // cell counts is off by the rounding herdr applied when it laid out.
+    let Some((ratio_now, split_extent)) = layout["splits"].as_array().and_then(|ss| {
         ss.iter()
-            .filter(|s| s["direction"].as_str() == Some("down"))
+            .filter(|s| s["direction"].as_str() == Some(axis.direction()))
             .filter(|s| rect_contains(&s["rect"], &own_rect))
-            .min_by_key(|s| s["rect"]["height"].as_u64().unwrap_or(u64::MAX))
-            .and_then(|s| Some((s["ratio"].as_f64()?, s["rect"]["height"].as_u64()?)))
+            .min_by_key(|s| s["rect"][axis.extent()].as_u64().unwrap_or(u64::MAX))
+            .and_then(|s| Some((s["ratio"].as_f64()?, s["rect"][axis.extent()].as_u64()?)))
     }) else {
         return;
     };
-    let Some(amount) = fit_amount(ratio_now, split_h, u64::from(target)) else { return };
+    let Some(amount) = fit_amount(ratio_now, split_extent, u64::from(target)) else { return };
     // The sibling is whoever was focused when the launcher split it off.
     // If the ids match, the env is not ours to trust (see the context-leak
     // trap in docs/spike-popup-panes.md) — don't resize anything.
@@ -276,7 +305,7 @@ pub fn fit_split_height(target: u16) {
             "--pane",
             &orig,
             "--direction",
-            "down",
+            axis.direction(),
             "--amount",
             &format!("{amount:.4}"),
         ]),
@@ -285,15 +314,16 @@ pub fn fit_split_height(target: u16) {
 }
 
 /// Ratio delta taking the split from `ratio_now` to the ratio that lays
-/// our (second) pane out at `target` rows; None when there is nothing
-/// (safe) to do. Single-call amounts cap out around 0.5, which a
-/// 0.5-ratio split never needs; the server also clamps ratios to 0.9, so
-/// on very tall tabs the strip bottoms out at 10% instead of the target.
-fn fit_amount(ratio_now: f64, split_h: u64, target: u64) -> Option<f64> {
-    if split_h <= target {
+/// our (second) pane out at `target` cells along the split's axis; None
+/// when there is nothing (safe) to do. Single-call amounts cap out around
+/// 0.5, which a 0.5-ratio split never needs; the server also clamps
+/// ratios to 0.9, so on a very tall tab (or a very wide one) the menu
+/// bottoms out at 10% instead of the target.
+fn fit_amount(ratio_now: f64, split_extent: u64, target: u64) -> Option<f64> {
+    if split_extent <= target {
         return None;
     }
-    let delta = (split_h - target) as f64 / split_h as f64 - ratio_now;
+    let delta = (split_extent - target) as f64 / split_extent as f64 - ratio_now;
     (delta > 0.0).then_some(delta)
 }
 

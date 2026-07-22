@@ -365,10 +365,12 @@ const SETTINGS_STUB: &str = r##"# herdr-whichkey — settings.
 
 # keys_path = "keys.toml"     # where the menu lives (relative to this file)
 
-[layout]                      # how items spread across the strip
+[layout]                      # where the menu opens and how items spread
+# placement = "bottom"        #   bottom (split below) | right (split beside) | popup (centered float)
+# height  = 7                 #   bottom: strip rows · popup: float rows (~2 are chrome either way)
+# width   = 32                #   right: strip columns · popup: float columns
 # justify = "space-evenly"    #   columns: start | center | end | space-between | space-around | space-evenly
-# align   = "space-around"    #   rows: same keywords
-# height  = 7                 #   strip height in split rows (~2 are pane chrome)
+# align   = "space-around"    #   rows: same keywords (both default per placement)
 # columns = 4                 #   pin the column count (default: fit the width)
 # gutter  = 9                 #   cells between columns (default: half an item)
 

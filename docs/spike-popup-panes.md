@@ -92,3 +92,55 @@ Split-surface findings that shaped the implementation:
 - The pane closes when its process exits, same as popups; the launcher's
   fifo/lock cleanup was verified through invoke → toggle → state dir
   empty.
+
+## herdr 0.7.5 re-verification (2026-07-22, for the placement work)
+
+Everything above still holds on 0.7.5. What changed is the **help text**,
+not the behaviour — `plugin pane open --help` now advertises only
+`overlay | split | tab | zoomed` and lists no `--width`/`--height`, but
+`--placement popup` still parses and both size flags are still accepted
+(`--ratio` is the one that really doesn't exist: "unknown option").
+Probed the way the flags were probed the first time, with an unknown
+`--plugin` so validation errors surface before any pane opens.
+
+- `--direction` still takes **only** `down` and `right`; `up` and `left`
+  are rejected with `invalid split direction: up`. **top and left remain
+  inexpressible**, which is why the placement enum is bottom|right|popup.
+- `--placement` on the CLI **overrides the manifest's** `[[panes]]
+  placement`, so one `menu` entrypoint serves all three surfaces.
+- The CLI exit code is trustworthy: 0 on open, 1 on `popup already open`
+  and on an unknown plugin. The launcher branches on it rather than on
+  the shape of the JSON.
+
+Measured live against a real client (a herdr client in a PTY the harness
+owns, rendered with pyte — herdr reads from `/dev/tty`, so the child needs
+the slave as its controlling terminal):
+
+- **A popup is a bordered box**, `--width`/`--height` are its *outer*
+  size, and the interior is 2 cols and 2 rows smaller. Percentages are of
+  the host screen; the default with neither flag is 50%/50%; sizes clamp
+  to the screen.
+- The border **title is the manifest's** `[[panes]] title` and nothing
+  can change it: a popup has no pane id, so `pane rename` cannot address
+  it, and **OSC 2 from inside the pane does not retitle it either**
+  (verified). The breadcrumb therefore lives in the popup's *body*, one
+  row of it, where the split puts it in the border title.
+- The popup process gets **no `HERDR_PANE_ID` at all** (split panes get
+  their own). The context-leak trap above still bites the neighbours —
+  `HERDR_TAB_ID`/`HERDR_WORKSPACE_ID` in the popup's env were the
+  *invoking CLI's*, from a different session — so nothing may read them.
+- **No reflow, measured**: with the popup open the focused pane's rect is
+  byte-identical before, during and after (`84×31 at 26,1`). Both split
+  placements move it.
+- **A focused popup swallows the trigger key.** herdr does not process
+  its own `prefix+…` bindings while a popup has focus: pressing the
+  whichkey binding again logs no action invocation at all (herdr's plugin
+  log stays flat across three presses) and the keystrokes arrive in the
+  popup as ordinary input. The same press *does* toggle a bottom split,
+  which herdr keeps routing prefix keys for. So on the popup surface Esc
+  and ctrl+c close the menu, and press-again-to-close is not available.
+- Toggle-to-close still works at the launcher level, and has to be built
+  differently: with no pane id there is nothing to `pane send-keys`, so
+  the binary writes its pid into the launcher's lock and the second
+  invocation signals it. Verified: second invocation → SIGTERM → done
+  fifo → launcher unblocks → lock and fifo cleaned → reopen works.

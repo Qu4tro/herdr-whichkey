@@ -15,17 +15,32 @@ navigation only.
 
 ## Decisions
 
-### Surface: bottom strip
+### Surface: bottom strip by default, configurable
 
-Full-width strip (~5–7 rows) in a popup plugin pane, keys in columns, `»`
+Full-width strip (~5–7 rows) in a split plugin pane, keys in columns, `»`
 marks groups. Chosen over a centered popup (occludes content) and a
 full-screen modal (most disruptive). Breadcrumb of the current group path in
 the strip's border title.
 
-**Open risk:** `plugin pane open` has `--width/--height` but no position flag.
-If popups can't dock to the bottom edge, fallback is `split --direction down`
-on the focused pane — which briefly reflows that pane, denting the no-flicker
-goal. Resolved in the live-validation milestone.
+**Open risk (resolved):** `plugin pane open` has `--width/--height` but no
+position flag, so popups float centered and cannot dock. The surface is
+`split --direction down`, which briefly reflows the focused pane — the cost
+the no-flicker goal pays for docking.
+
+**Amended (hw-16fc):** the default stands, the *only-choice* did not.
+`[layout] placement` picks between three surfaces, because the trade-off is
+a user's to make, not ours:
+
+| placement | surface | reflows the focused pane | size knob |
+|---|---|---|---|
+| `bottom` (default) | split below | yes | `height`, rows |
+| `right` | split beside | yes | `width`, columns |
+| `popup` | centered float | **no** | `width` × `height`, outer cells |
+
+`top` and `left` are **not expressible**: herdr 0.7.5's `--direction` takes
+only `down` and `right` and rejects `up`/`left` outright, and the workaround
+— split then move — reflows the focused pane twice, which is the one thing
+this design is built to avoid. Cut rather than hacked (hw-y4df).
 
 ### Trigger and lifecycle
 
@@ -143,8 +158,15 @@ publish time.
 
 ## Rejected along the way
 
-- **Centered popup / full-screen modal** for the surface — occlusion and
-  disruption; bottom strip keeps the workspace readable.
+- **Centered popup / full-screen modal** as *the* surface — occlusion and
+  disruption; the bottom strip keeps the workspace readable, and stays the
+  default. Superseded in part: the popup is now an **option**
+  (`placement = "popup"`), because it is the one surface that never
+  reflows the focused pane — measured, not assumed. It pays for that with
+  occlusion, with a breadcrumb it has to draw in its own body (a popup has
+  no pane id, so nothing can retitle its border), and with press-again-to-
+  close, which herdr cannot deliver to a focused popup. A trade, offered
+  rather than made for the user. Full-screen modal stays rejected.
 - **Seeded-full-copy config** — transparent but frozen; updates never reach
   the user. Overlay + commented seed + `defaults` subcommand covers
   discoverability without the fork. Scoped, not reversed (hw-b422): the

@@ -1,6 +1,8 @@
-//! The bottom-strip menu: flicker-free rendering (one synchronized frame
-//! per keystroke, no full-screen clears between frames) and the
-//! single-keystroke loop. We own the whole plugin pane surface.
+//! The menu itself: flicker-free rendering (one synchronized frame per
+//! keystroke, no full-screen clears between frames) and the
+//! single-keystroke loop. We own the whole plugin pane surface, whichever
+//! one `[layout] placement` opened — the strip, the side column and the
+//! popup differ here only in how many rows of chrome they carve off.
 
 use std::io::Write as _;
 
@@ -118,12 +120,15 @@ pub fn run(
     loop {
         let (level, _) = *stack.last().expect("stack never empty");
         if dirty {
-            let want = std::iter::once("whichkey")
-                .chain(stack.iter().skip(1).map(|(_, l)| l.as_str()))
-                .collect::<Vec<_>>()
-                .join(" › ");
+            // A split pane owns its border title, so the breadcrumb goes
+            // there and the body spends no row on it. A popup has no pane
+            // id to rename (docs/spike-popup-panes.md) and its border
+            // title is whatever the manifest says, so it draws its own.
+            let want = breadcrumb(&stack);
             if want != title {
-                dispatch::set_pane_title(&want);
+                if lay.placement.header_rows() == 0 {
+                    dispatch::set_pane_title(&want);
+                }
                 title = want;
             }
             frame = render(pal, lay, &stack, level, &notice, hover)?;
@@ -206,6 +211,14 @@ pub fn run(
             _ => {}
         }
     }
+}
+
+/// The group path we're in: "whichkey › git › worktree".
+fn breadcrumb(stack: &[(&[Node], String)]) -> String {
+    std::iter::once("whichkey")
+        .chain(stack.iter().skip(1).map(|(_, l)| l.as_str()))
+        .collect::<Vec<_>>()
+        .join(" › ")
 }
 
 /// One level up, or nothing at the root. Backspace, empty-space click and
@@ -320,9 +333,21 @@ fn drawn(x: usize, y: usize, item_width: usize, cols: usize, item_rows: usize) -
     x + item_width <= cols + 1 && y < item_rows
 }
 
+/// The body rows between the chrome: how many the surface spends on a
+/// breadcrumb above the items, and how many items are left after the
+/// footer. Rendering and hit-testing both derive their rows from here —
+/// a pane too short for either gets zero item rows rather than a clamp,
+/// so nothing is drawn where no click could reach it.
+fn item_area(lay: &LayoutConfig, rows: u16) -> (usize, usize) {
+    let top = lay.placement.header_rows();
+    (top as usize, rows.saturating_sub(top + 1) as usize)
+}
+
 /// Which item covers pane cell (col, row), if any. The whole `item_width`
 /// cell is the target, not just the drawn text — the gutters between
-/// columns and the footer line stay dead space, which is the ascend gesture.
+/// columns, the breadcrumb row and the footer line stay dead space, which
+/// is the ascend gesture. (On a popup that finally makes clicking the
+/// breadcrumb ascend: on a split it is herdr chrome and never reaches us.)
 fn hit(
     level: &[Node],
     lay: &LayoutConfig,
@@ -331,14 +356,15 @@ fn hit(
     col: u16,
     row: u16,
 ) -> Result<Option<usize>> {
-    // No `.max(1)`: in a 0- or 1-row pane the footer covers everything, so
-    // there are no item rows and `row >= item_rows` rejects every click.
-    // Clamping here instead would put a phantom item under the footer text.
-    let (cols, item_rows) = (cols as usize, rows.saturating_sub(1) as usize);
+    let (top, item_rows) = item_area(lay, rows);
+    let cols = cols as usize;
     let (col, row) = (col as usize, row as usize);
-    if row >= item_rows {
+    // No `.max(1)` on item_rows: in a pane too short for the chrome the
+    // footer covers everything, so `row >= item_rows` rejects every click.
+    // Clamping instead would put a phantom item under the footer text.
+    let Some(row) = row.checked_sub(top).filter(|r| *r < item_rows) else {
         return Ok(None);
-    }
+    };
     let (_, item_width, places) = grid(level, lay, cols, item_rows)?;
     Ok(places.iter().position(|&(x, y)| {
         drawn(x, y, item_width, cols, item_rows) && row == y && col >= x && col < x + item_width
@@ -358,11 +384,12 @@ fn render(
     let mut out = std::io::stdout();
     let (cols, rows) = terminal::size().unwrap_or((80, 8));
     let cols_u = cols as usize;
-    // No title row — the breadcrumb is the pane border title. Only the
-    // footer line is carved off the item area. No `.max(1)`: a 0- or 1-row
-    // pane is all footer, and `hit()` counts it as having no item rows —
-    // drawing an item there would paint something no click can reach.
-    let item_rows = rows.saturating_sub(1);
+    // The footer line, and on a popup the breadcrumb line, are carved off
+    // the item area — `hit()` carves the same rows off, so a pane too
+    // short for them has no item rows at all rather than items drawn
+    // where no click can reach them.
+    let (top, item_rows) = item_area(lay, rows);
+    let (top, item_rows) = (top as u16, item_rows as u16);
 
     queue!(out, terminal::BeginSynchronizedUpdate, SetBackgroundColor(pal.bg))?;
     // Repaint every row from column 0; UntilNewLine fills the tail with the
@@ -371,21 +398,33 @@ fn render(
         queue!(out, cursor::MoveTo(0, y), terminal::Clear(terminal::ClearType::UntilNewLine))?;
     }
 
-    // Items form a footer-style grid: the strip width picks the column
-    // count (unless `columns` pins it), taffy positions the grid with
-    // the `[layout]` distribution knobs — space-evenly both ways by
-    // default.
+    // The breadcrumb, on the surfaces that can't put it in a border title.
+    if top > 0 {
+        queue!(
+            out,
+            cursor::MoveTo(0, 0),
+            SetForegroundColor(pal.accent),
+            style::Print(clip(&breadcrumb(stack), cols_u))
+        )?;
+    }
+
+    // Items form a grid in the rows the chrome leaves: the area's width
+    // picks the column count (unless `columns` pins it), taffy positions
+    // the grid with the `[layout]` distribution knobs — defaulting per
+    // placement, since a footer strip and a 40-row column want opposite
+    // things. `y` is item-area relative; `top` puts it on the screen.
     let (texts, item_width, places) = grid(level, lay, cols_u, item_rows as usize)?;
     for (i, ((key, label, group), (x, y))) in texts.iter().zip(places).enumerate() {
         if !drawn(x, y, item_width, cols_u, item_rows as usize) {
             continue; // off-screen; live validation decides if we page
         }
+        let y = y as u16 + top;
         // The hovered cell is painted whole, so the click target is visible
         // — with the raised background, or reverse video when the palette
         // has none of its own (ANSI mode).
         let hot = hover == Some(i);
         if hot {
-            queue!(out, cursor::MoveTo(x as u16, y as u16))?;
+            queue!(out, cursor::MoveTo(x as u16, y))?;
             if pal.surface == pal.bg {
                 queue!(out, SetAttribute(Attribute::Reverse))?;
             } else {
@@ -395,7 +434,7 @@ fn render(
         }
         queue!(
             out,
-            cursor::MoveTo(x as u16, y as u16),
+            cursor::MoveTo(x as u16, y),
             SetForegroundColor(pal.accent),
             style::Print(key),
             SetForegroundColor(pal.dim),
@@ -551,6 +590,61 @@ mod tests {
             let shown: Vec<_> =
                 places.iter().filter(|&&(x, y)| drawn(x, y, item_width, 179, item_rows)).collect();
             assert!(shown.is_empty(), "{rows}-row pane draws unclickable cells {shown:?}");
+        }
+    }
+
+    /// A popup spends its top row on the breadcrumb, because its border
+    /// title belongs to the manifest and it has no pane id to rename. Every
+    /// item therefore sits one row lower than the same menu in a split, and
+    /// the breadcrumb row is dead space — so clicking it ascends.
+    #[test]
+    fn the_popup_breadcrumb_row_pushes_the_items_down_and_takes_no_clicks() {
+        let level = level();
+        let split = LayoutConfig::default(); // bottom, today's strip
+        let popup = LayoutConfig { placement: layout::Placement::Popup, ..Default::default() };
+        // In the same 8-row pane a split spends one row on chrome and a
+        // popup two, and the popup's is at the top.
+        assert_eq!(item_area(&split, 8), (0, 7));
+        assert_eq!(item_area(&popup, 8), (1, 6));
+
+        // The breadcrumb row takes no clicks, which is what makes clicking
+        // it ascend — the gesture a split can't have, its title being
+        // herdr's chrome.
+        for col in 0..179u16 {
+            assert_eq!(hit(&level, &popup, 179, 8, col, 0).unwrap(), None);
+        }
+        // Every item answers on the row the renderer drew it on: item-area
+        // coordinates plus the breadcrumb the renderer put above them.
+        let (top, item_rows) = item_area(&popup, 8);
+        let (_, item_width, places) = grid(&level, &popup, 179, item_rows).unwrap();
+        for (i, &(x, y)) in places.iter().enumerate() {
+            assert!(drawn(x, y, item_width, 179, item_rows), "item {i} at {x},{y} never drawn");
+            let (col, row) = (x as u16, (y + top) as u16);
+            assert_eq!(hit(&level, &popup, 179, 8, col, row).unwrap(), Some(i));
+            // Unshifted, the same cell is somebody else's or nobody's — the
+            // offset is the whole difference between hitting and missing.
+            assert_ne!(hit(&level, &popup, 179, 8, col, y as u16).unwrap(), Some(i));
+        }
+    }
+
+    /// The zero-item-rows invariant, on the surface that has two rows of
+    /// chrome to fit: nothing may be drawn where no click can land.
+    #[test]
+    fn a_popup_too_short_for_its_chrome_draws_and_hits_nothing() {
+        let (lay, level) =
+            (LayoutConfig { placement: layout::Placement::Popup, ..Default::default() }, level());
+        for rows in 0..=2u16 {
+            let (top, item_rows) = item_area(&lay, rows);
+            assert_eq!(item_rows, 0, "{rows}-row popup claims item rows");
+            for col in 0..179u16 {
+                for row in 0..rows.max(1) {
+                    assert_eq!(hit(&level, &lay, 179, rows, col, row).unwrap(), None);
+                }
+            }
+            let (_, item_width, places) = grid(&level, &lay, 179, item_rows).unwrap();
+            let shown: Vec<_> =
+                places.iter().filter(|&&(x, y)| drawn(x, y, item_width, 179, item_rows)).collect();
+            assert!(shown.is_empty(), "{rows}-row popup (top {top}) draws {shown:?}");
         }
     }
 

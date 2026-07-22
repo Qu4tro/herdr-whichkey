@@ -1,8 +1,9 @@
 //! herdr-whichkey — blezz/which-key-style single-keystroke action menu
-//! for herdr. Runs inside a herdr plugin pane docked as a bottom split:
-//! the menu tree from the user's keys file (the shipped one until `init`
-//! writes it), settings from whichkey.toml, rendered as key hints in
-//! columns, dispatched on single keystrokes.
+//! for herdr. Runs inside a herdr plugin pane — a bottom split by
+//! default, a side split or a centered popup on request: the menu tree
+//! from the user's keys file (the shipped one until `init` writes it),
+//! settings from whichkey.toml, rendered as key hints in columns,
+//! dispatched on single keystrokes.
 
 mod config;
 mod context;
@@ -27,12 +28,15 @@ fn main() -> Result<()> {
             _ => anyhow::bail!("usage: herdr-whichkey defaults [--shipped]"),
         },
         Some("init") => init(),
+        Some("surface") => print_surface(),
         Some("--version") | Some("-V") => {
             println!("herdr-whichkey {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         None | Some("menu") => run_menu(),
-        Some(other) => anyhow::bail!("unknown subcommand: {other} (try: menu, defaults, init)"),
+        Some(other) => {
+            anyhow::bail!("unknown subcommand: {other} (try: menu, defaults, init, surface)")
+        }
     }
 }
 
@@ -63,16 +67,47 @@ fn run_menu() -> Result<()> {
         }
     });
 
-    // Config first: the split fit below wants `[layout] height`, and
-    // loading a local TOML is nothing next to the herdr calls that follow.
-    let loaded = config::load();
+    // The launcher's toggle needs a way to close us on the second press.
+    // A split pane is addressable (`pane send-keys ctrl+c`), but a popup
+    // has no pane id at all — so leave our pid in the lock the launcher
+    // owns, and let it signal us instead. Our signal handler above turns
+    // that into the same clean exit ctrl+c gives.
+    if let Some(dir) = std::env::var_os("WHICHKEY_LOCK_DIR") {
+        let pid = std::process::id();
+        let _ = std::fs::write(std::path::Path::new(&dir).join("pid"), format!("{pid}\n"));
+    }
 
-    // Split placement opens at ratio 0.5 and can't be sized at open time
-    // — shrink to strip height before the first frame paints (the
-    // launcher tags the surface; popups size themselves at open).
-    if std::env::var_os("WHICHKEY_SURFACE").is_some_and(|v| v == "split") {
-        let h = loaded.as_ref().ok().and_then(|c| c.layout.height).unwrap_or(7);
-        dispatch::fit_split_height(h.max(3));
+    // Config first: the split fit below wants `[layout]`, and loading a
+    // local TOML is nothing next to the herdr calls that follow.
+    let mut loaded = config::load();
+
+    // The surface the launcher actually opened us on wins over the config
+    // it derived that from: if the two disagree — a config that stopped
+    // parsing between the two reads, say — the env describes what is on
+    // screen, and the renderer has to match what is on screen.
+    let surface = std::env::var("WHICHKEY_SURFACE")
+        .ok()
+        .and_then(|s| layout::Placement::parse(&s))
+        .or_else(|| loaded.as_ref().ok().map(|c| c.layout.placement))
+        .unwrap_or_default();
+    if let Ok(cfg) = &mut loaded {
+        cfg.layout.placement = surface;
+    }
+
+    // A split opens at ratio 0.5 and can't be sized at open time, so it
+    // shrinks itself to the configured size before the first frame paints.
+    // A popup needs none of this: herdr honours --width/--height at open.
+    let lay = loaded.as_ref().ok().map(|c| c.layout.clone()).unwrap_or_default();
+    match surface {
+        layout::Placement::Bottom => {
+            let h = lay.height.unwrap_or(surface.height());
+            dispatch::fit_split(dispatch::SplitAxis::Down, h.max(3));
+        }
+        layout::Placement::Right => {
+            let w = lay.width.unwrap_or(surface.width());
+            dispatch::fit_split(dispatch::SplitAxis::Right, w.max(8));
+        }
+        layout::Placement::Popup => {}
     }
 
     // Resolve the palette before touching config errors: they render in
@@ -116,6 +151,31 @@ fn load_tree(cfg: config::Config) -> Result<Menu> {
     // whole menu because one probe failed would be the surprising choice.
     let have_plugin = |p: &str| plugins.as_ref().map(|set| set.contains(p)).unwrap_or(true);
     Ok((model::prune_unavailable(tree, &have_bin, &have_plugin), ctx, cfg.layout, cfg.ui))
+}
+
+/// `herdr-whichkey surface` — the resolved placement and its two sizes,
+/// as `key=value` lines. The launcher decides how to open the pane and
+/// can't parse TOML itself; this is the one place that knows what
+/// `[layout]` resolves to. A config that won't parse prints the defaults
+/// rather than failing: the menu still has to open to show the error.
+fn print_surface() -> Result<()> {
+    let lay = config::load().map(|c| c.layout).unwrap_or_default();
+    let p = lay.placement;
+    // Floors, because these are the numbers herdr sizes the popup by and
+    // it will happily open one smaller than its own border — a frame with
+    // no room for a single item. The split placements floor the axis they
+    // self-fit on instead (see `run_menu`).
+    let (min_w, min_h) = match p {
+        layout::Placement::Popup => (20, 6),
+        layout::Placement::Bottom | layout::Placement::Right => (0, 0),
+    };
+    print!(
+        "placement={}\nwidth={}\nheight={}\n",
+        p.as_str(),
+        lay.width.unwrap_or(p.width()).max(min_w),
+        lay.height.unwrap_or(p.height()).max(min_h)
+    );
+    Ok(())
 }
 
 /// `herdr-whichkey init` — write the shipped menu into the keys file and a
